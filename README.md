@@ -6,7 +6,19 @@ The MVP uses OWASP ZAP baseline scanning against authorized, allowlisted public 
 
 ## Current status
 
-This repository currently contains the project documentation and an empty application scaffold. Python files contain no implementation. Dependency configuration, Dockerfiles, Docker Compose configuration, migration tooling, and AWS deployment resources have not been created yet. The application cannot be started at this stage.
+The local bootstrap stack is implemented: API liveness, PostgreSQL, Keycloak with
+two team fixtures, LocalStack SNS/SQS provisioning, and separate idle dispatcher
+and ZAP worker processes. Scan endpoints, JWT enforcement in the API, job storage,
+migrations, dispatch, and scanner execution remain feature work.
+
+See [Local development](docs/local-development.md) for credentials, configuration,
+token acquisition, verification, and acceptance boundaries.
+
+```sh
+python3 scripts/setup_local.py
+docker compose up --build -d --wait --wait-timeout 240
+docker compose exec -T api python scripts/verify_local.py
+```
 
 ## Project structure
 
@@ -74,18 +86,18 @@ Keep routes focused on HTTP behavior, services on workflows, and repositories on
 
 | Path | Purpose |
 | --- | --- |
-| `docker/` | Container build and development configuration assets. A future Compose file will coordinate local services; none exists yet. |
+| `docker/` | Container build and development configuration assets. The root `compose.yaml` coordinates local infrastructure and bootstrap services. |
 | `docker/api/` | Build assets for the API container, such as its Dockerfile. |
 | `docker/worker/` | Build assets for scanning workers and their scanner runtime dependencies. |
 | `docker/keycloak/` | Reproducible local Keycloak configuration, such as realm/client setup and test-team configuration. Real secrets and runtime data must remain outside committed configuration. |
-| `docs/` | Requirements and implementation planning. `requirements.md` contains the RAD; `user-stories.csv` contains stories, subtasks, recommended implementation order, and dependencies. |
+| `docs/` | Requirements and implementation planning. `requirements.md` contains the RAD; `../user-stories.csv` contains stories, subtasks, recommended implementation order, and dependencies. |
 | `infra/` | Infrastructure definitions and deployment configuration. |
 | `infra/aws/` | Future AWS resources and policies for compute, messaging, persistence, networking, and access control. Infrastructure tooling has not yet been selected. |
 | `migrations/` | Database migration configuration and execution support, to be added when migration tooling is configured. |
 | `migrations/versions/` | Versioned schema changes applied in a controlled sequence. Editing a SQLAlchemy model alone will not update an existing database. |
 | `scripts/` | Developer and operator command wrappers. Reusable application behavior belongs in `app/`. |
 | `tests/` | Automated verification of application behavior. |
-| `tests/conftest.py` | Shared pytest fixtures and test setup. Currently empty. |
+| `tests/conftest.py` | Shared pytest fixtures and test setup. Shared fixtures will be introduced with feature tests. |
 | `tests/unit/` | Focused tests of individual rules or components using controlled dependencies. |
 | `tests/integration/` | Tests of component boundaries, such as repositories with PostgreSQL or messaging with configured SNS/SQS endpoints. |
 | `tests/e2e/` | Tests of complete user flows, including authenticated submission, asynchronous processing, result retrieval, and team isolation. |
@@ -105,14 +117,19 @@ The intended scan flow is:
 
 The API process does not execute scans directly. Workers and dispatchers are intended to run independently of the API, even though they share this Python package.
 
+See [Architecture](docs/architecture.md) for the transactional outbox pattern,
+dispatcher retries, and duplicate-delivery handling.
+The [design-pattern catalog](docs/design-pattern/README.md) contains the individual
+pattern documents and their implementation status.
+
 ## Placeholder and ignore files
 
-- Empty `__init__.py` files mark the application directories as Python packages. They contain no startup logic.
+- Empty `__init__.py` files mark the application directories as Python packages. They contain no startup logic; `main.py` and `bootstrap.py` provide the current service entry points.
 - `.gitkeep` files allow otherwise empty directories to be tracked by Git. Remove a placeholder once its directory contains real tracked files.
-- `.gitignore` excludes local secrets, virtual environments, Python/test caches, runtime data, generated reports, and infrastructure state. Example environment files are allowed, but must contain placeholders rather than credentials. Dependency lock files and database migrations should be committed when introduced.
+- `.gitignore` excludes local secrets, virtual environments, Python/test caches, runtime data, generated reports, and infrastructure state. Example environment files are allowed, but must contain placeholders rather than credentials. `requirements.lock` is committed; database migrations will be committed when introduced.
 
 ## Where to begin
 
-Follow `implementation_sequence` in `docs/user-stories.csv` for the recommended solo development order. Its first task is `US-019.1: Provide local service configuration`.
+Follow `implementation_sequence` in `../user-stories.csv` for the recommended solo development order. `US-019.1` provides the bootstrap described in the local development guide; full scan-flow verification belongs to `US-019.2`.
 
 The `depends_on` column lists prerequisite subtask IDs. Independent tasks can run in parallel when their agreed contracts and fixtures are available. Parent stories group related outcomes and do not have their own implementation sequence.

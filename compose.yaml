@@ -1,0 +1,131 @@
+name: elasticscan-local
+
+x-app: &app
+  image: elasticscan-api:local
+  build:
+    context: .
+    dockerfile: docker/api/Dockerfile
+  env_file: .env
+  environment: &environment
+    PGHOST: postgres
+    PGPORT: "5432"
+    PGDATABASE: ${POSTGRES_DB:-elasticscan}
+    PGUSER: ${POSTGRES_USER:-elasticscan}
+    PGPASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/setup_local.py first}
+    AWS_EC2_METADATA_DISABLED: "true"
+  init: true
+
+x-dependencies: &dependencies
+  postgres:
+    condition: service_healthy
+  localstack:
+    condition: service_healthy
+  keycloak:
+    condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16.6-bookworm
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-elasticscan}
+      POSTGRES_USER: ${POSTGRES_USER:-elasticscan}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Run python3 scripts/setup_local.py first}
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["postgres-data:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  localstack:
+    image: localstack/localstack:4.0.3
+    environment:
+      SERVICES: sns,sqs
+      AWS_DEFAULT_REGION: ${AWS_DEFAULT_REGION:-us-east-1}
+      AWS_ACCESS_KEY_ID: test
+      AWS_SECRET_ACCESS_KEY: test
+      SQS_ENDPOINT_STRATEGY: path
+      LOCALSTACK_HOST: localstack:4566
+    ports: ["127.0.0.1:4566:4566"]
+    volumes:
+      - ./docker/localstack/init.sh:/etc/localstack/init/ready.d/init.sh:ro
+      - ./docker/localstack/provision.py:/opt/bootstrap/provision.py:ro
+      - ./docker/localstack/healthcheck.py:/opt/bootstrap/healthcheck.py:ro
+    healthcheck:
+      test: ["CMD", "python3", "/opt/bootstrap/healthcheck.py"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 10s
+
+  realm-init:
+    <<: *app
+    user: "0:0"
+    command: ["python", "scripts/render_realm.py"]
+    volumes: ["keycloak-import:/realm"]
+    restart: "no"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.0.7
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KC_BOOTSTRAP_ADMIN_USERNAME:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KC_BOOTSTRAP_ADMIN_PASSWORD:?Run python3 scripts/setup_local.py first}
+      KC_HOSTNAME: http://localhost:8080
+      KC_HEALTH_ENABLED: "true"
+      KC_DB: dev-mem
+    ports: ["127.0.0.1:8080:8080"]
+    volumes: ["keycloak-import:/opt/keycloak/data/import:ro"]
+    depends_on:
+      realm-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - "bash -c 'exec 3<>/dev/tcp/127.0.0.1/9000; printf \"GET /health/ready HTTP/1.0\\r\\n\\r\\n\" >&3; head -n 1 <&3 | grep -q 200'"
+      interval: 5s
+      timeout: 5s
+      retries: 40
+      start_period: 20s
+
+  api:
+    <<: *app
+    ports: ["127.0.0.1:8000:8000"]
+    depends_on: *dependencies
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health/live', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  dispatcher:
+    <<: *app
+    command: ["python", "-m", "app.bootstrap", "--role", "dispatcher"]
+    depends_on: *dependencies
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/bootstrap-ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  zap-worker:
+    image: elasticscan-zap-worker:local
+    build:
+      context: .
+      dockerfile: docker/worker/Dockerfile
+    env_file: .env
+    environment: *environment
+    init: true
+    depends_on: *dependencies
+    cpus: 1.0
+    mem_limit: 2g
+    healthcheck:
+      test: ["CMD", "test", "-f", "/tmp/bootstrap-ready"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  postgres-data:
+  keycloak-import:
