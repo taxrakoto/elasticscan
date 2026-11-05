@@ -1,0 +1,280 @@
+{
+  "contract_version": 1,
+  "story": "US-003.1",
+  "valid": [
+    {
+      "name": "https_target",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/path?mode=baseline"
+        }
+      }
+    },
+    {
+      "name": "http_target",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "http://scan.example.invalid/"
+        }
+      }
+    }
+  ],
+  "invalid": [
+    {
+      "name": "missing_scan_type",
+      "payload": {
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        }
+      },
+      "error_location": [
+        "scan_type"
+      ]
+    },
+    {
+      "name": "missing_parameters",
+      "payload": {
+        "scan_type": "zap"
+      },
+      "error_location": [
+        "parameters"
+      ]
+    },
+    {
+      "name": "missing_url",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {}
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "unsupported_tool",
+      "payload": {
+        "scan_type": "trivy",
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        }
+      },
+      "error_location": [
+        "scan_type"
+      ]
+    },
+    {
+      "name": "wrong_case",
+      "payload": {
+        "scan_type": "ZAP",
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        }
+      },
+      "error_location": [
+        "scan_type"
+      ]
+    },
+    {
+      "name": "null_scan_type",
+      "payload": {
+        "scan_type": null,
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        }
+      },
+      "error_location": [
+        "scan_type"
+      ]
+    },
+    {
+      "name": "empty_url",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": ""
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "blank_url",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "   "
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "null_url",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": null
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "numeric_url",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": 123
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "malformed_url",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "not-a-url"
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "missing_scheme",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "scan.example.invalid"
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "missing_host",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://"
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "ftp_scheme",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "ftp://scan.example.invalid/"
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "file_scheme",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "file:///etc/passwd"
+        }
+      },
+      "error_location": [
+        "parameters",
+        "url"
+      ]
+    },
+    {
+      "name": "null_parameters",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": null
+      },
+      "error_location": [
+        "parameters"
+      ]
+    },
+    {
+      "name": "list_parameters",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": []
+      },
+      "error_location": [
+        "parameters"
+      ]
+    },
+    {
+      "name": "string_parameters",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": "https://scan.example.invalid/"
+      },
+      "error_location": [
+        "parameters"
+      ]
+    },
+    {
+      "name": "unknown_root_field",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        },
+        "unexpected": true
+      },
+      "error_location": [
+        "unexpected"
+      ]
+    },
+    {
+      "name": "untrusted_owner_field",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        },
+        "team_id": "team-beta"
+      },
+      "error_location": [
+        "team_id"
+      ]
+    },
+    {
+      "name": "unknown_parameter_field",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/",
+          "command": "anything"
+        }
+      },
+      "error_location": [
+        "parameters",
+        "command"
+      ]
+    }
+  ]
+}
