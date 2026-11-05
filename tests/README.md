@@ -54,3 +54,22 @@ provides JSON serialization. The models perform no DNS lookups or persistence.
 The fixture contract version identifies the test examples; it does not add a
 version field to the public submission JSON or establish the other cross-component
 contracts mentioned in the story's sequencing note.
+
+## US-004.1: PostgreSQL storage
+
+`integration/test_job_storage.py` adds six real PostgreSQL tests. They cover
+migration/model agreement, repeated upgrade and downgrade/re-upgrade, committed
+job/intent reload through a fresh connection pool, database immutability and
+state constraints, execution/outcome storage, and dispatch uniqueness/foreign keys.
+Each test migrates and removes its own disposable schema.
+
+Run the complete suite with the opt-in database flag:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
+```
+
+PostgreSQL must be healthy and the API image rebuilt with the updated lock.
+Without the flag, the six database tests are explicitly skipped. On 2026-11-05,
+the full suite passed all 11 tests against PostgreSQL 16.6. See
+[Database migrations](../docs/database-migrations.md) for schema and deployment details.

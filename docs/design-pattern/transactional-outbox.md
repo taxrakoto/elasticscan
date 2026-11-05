@@ -2,8 +2,9 @@
 
 **Status:** Proposed reliability design from the [requirements](../requirements.md),
 Sections 5 and 6.4. The local stack currently runs an idle dispatcher placeholder;
-the outbox schema, publisher, retry loop, and worker recovery logic are not yet
-implemented. This document describes their intended behavior.
+US-004.1 implements the job and dispatch-intent schema (see the
+[storage guide](../database-migrations.md)). The acceptance transaction, publisher,
+retry loop, and worker recovery logic are not yet implemented. This document describes their intended behavior.
 
 ### Problem: saving a job and publishing its message
 
@@ -66,8 +67,9 @@ persists scan outcomes. PostgreSQL remains the source of truth for job state.
 
 ### Outbox records and background processing
 
-The following fields describe a proposed logical record, not a finalized database
-schema:
+The following fields describe the logical record. The current schema stores
+publication metadata in `dispatch_intents` and reads payload/routing fields from
+the immutable referenced job:
 
 | Field | Purpose |
 | --- | --- |

@@ -8,7 +8,7 @@ that a pattern's application behavior has been implemented.
 | Pattern | Application | Current status |
 | --- | --- | --- |
 | [Publish–Subscribe](publish-subscribe.md) | SNS subscriptions route scan messages to scanner-specific SQS queues | Local infrastructure implemented and routing verified; application publisher and consumer pending |
-| [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Proposed; application logic pending |
+| [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Job/intent storage implemented (US-004.1); acceptance transaction and publisher pending |
 | [Idempotent Consumer](idempotent-consumer.md) | Handle repeated queue deliveries through durable worker claims and terminal-state protection | Proposed; application logic pending |
 
 ## Maintaining the catalog

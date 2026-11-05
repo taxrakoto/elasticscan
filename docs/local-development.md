@@ -2,8 +2,10 @@
 
 This is the bootstrap portion of Section 3.2 and AC-022 in the RAD. It provides
 PostgreSQL, a FastAPI liveness endpoint, Keycloak, SNS/SQS emulation, an idle
-dispatcher, and an idle ZAP worker with the pinned scanner runtime. No scan routes,
-job tables, migrations, dispatch loop, or scanner adapter exist yet. The idle
+dispatcher, and an idle ZAP worker with the pinned scanner runtime. Scan routes,
+the dispatch loop, and scanner adapters remain future work. US-004.1 adds job/dispatch-intent
+tables and Alembic migrations; apply them explicitly as described in the
+[database migration guide](database-migrations.md). The idle
 processes explicitly log their status and do not consume or execute jobs.
 Their health checks indicate process startup only, not readiness to accept scans.
 
@@ -148,8 +150,9 @@ development configuration.
 
 ## Component handoff and acceptance boundaries
 
-US-004.1 adds SQLAlchemy models and versioned migrations. No migrations can be run
-yet; a healthy PostgreSQL instance does not imply the schema exists. US-001.1 adds
+US-004.1 provides SQLAlchemy models and versioned migrations. Run the commands in
+[Database migrations](database-migrations.md) to create or update the schema;
+a healthy PostgreSQL instance alone does not imply the schema exists. US-001.1 adds
 API token validation using the OIDC settings above. All future scan operations
 must require JWT validation and team-scoped authorization. This task exposes only
 a public liveness endpoint, and does not demonstrate API-level team isolation.
@@ -165,7 +168,7 @@ A future scan type needs a versioned payload contract, adapter, dedicated worker
 queue, matching SNS attribute filter, and compatibility tests. This bootstrap
 uses only `scan_type=zap`; adapter contracts and extension tests belong to
 US-003.1 and US-019.3. Full AC-012/AC-022 acceptance, authenticated submit/poll,
-migrations, two-team isolation, and authorized baseline scans remain gates in
+migration deployment, two-team isolation, and authorized baseline scans remain gates in
 US-019.2/US-019.3 and AWS deployment stories.
 
 ## Stop, reset, and troubleshoot

@@ -100,7 +100,7 @@ def main():
     print('PASS: API liveness and OpenAPI')
     verify_identity()
     verify_messaging()
-    print('Bootstrap checks passed. Scan routes, API JWT enforcement, migrations, and team isolation await their feature stories.')
+    print('Bootstrap checks passed. Scan routes, API JWT enforcement, transactional acceptance, and team isolation await their feature stories.')
 
 
 if __name__ == '__main__':

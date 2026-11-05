@@ -8,11 +8,13 @@ The MVP uses OWASP ZAP baseline scanning against authorized, allowlisted public 
 
 The local bootstrap stack is implemented: API liveness, PostgreSQL, Keycloak with
 two team fixtures, LocalStack SNS/SQS provisioning, and separate idle dispatcher
-and ZAP worker processes. Scan endpoints, JWT enforcement in the API, job storage,
-migrations, dispatch, and scanner execution remain feature work.
+and ZAP worker processes. US-004.1 adds SQLAlchemy job/dispatch-intent storage and
+versioned Alembic migrations. Scan endpoints, JWT enforcement in the API,
+transactional acceptance, dispatch, and scanner execution remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
-token acquisition, verification, and acceptance boundaries.
+token acquisition, verification, and acceptance boundaries. See
+[Database migrations](docs/database-migrations.md) for applying and evolving the schema.
 
 ```sh
 python3 scripts/setup_local.py
@@ -93,7 +95,7 @@ Keep routes focused on HTTP behavior, services on workflows, and repositories on
 | `docs/` | Requirements and implementation planning. `requirements.md` contains the RAD; `../user-stories.csv` contains stories, subtasks, recommended implementation order, and dependencies. |
 | `infra/` | Infrastructure definitions and deployment configuration. |
 | `infra/aws/` | Future AWS resources and policies for compute, messaging, persistence, networking, and access control. Infrastructure tooling has not yet been selected. |
-| `migrations/` | Database migration configuration and execution support, to be added when migration tooling is configured. |
+| `migrations/` | Alembic configuration and execution support; see the database migration guide. |
 | `migrations/versions/` | Versioned schema changes applied in a controlled sequence. Editing a SQLAlchemy model alone will not update an existing database. |
 | `scripts/` | Developer and operator command wrappers. Reusable application behavior belongs in `app/`. |
 | `tests/` | Automated verification of application behavior. |
@@ -126,7 +128,7 @@ pattern documents and their implementation status.
 
 - Empty `__init__.py` files mark the application directories as Python packages. They contain no startup logic; `main.py` and `bootstrap.py` provide the current service entry points.
 - `.gitkeep` files allow otherwise empty directories to be tracked by Git. Remove a placeholder once its directory contains real tracked files.
-- `.gitignore` excludes local secrets, virtual environments, Python/test caches, runtime data, generated reports, and infrastructure state. Example environment files are allowed, but must contain placeholders rather than credentials. `requirements.lock` is committed; database migrations will be committed when introduced.
+- `.gitignore` excludes local secrets, virtual environments, Python/test caches, runtime data, generated reports, and infrastructure state. Example environment files are allowed, but must contain placeholders rather than credentials. `requirements.lock` is committed; versioned database migrations are committed alongside their models.
 
 ## Where to begin
 

@@ -7,7 +7,8 @@ scanner-specific SQS queues; workers execute scans and persist their outcomes.
 The current implementation is a local bootstrap: the API exposes liveness and
 OpenAPI, PostgreSQL and messaging infrastructure are provisioned, and Keycloak
 provides development identities for two teams. Dispatcher and worker processes
-remain idle placeholders.
+remain idle placeholders. SQLAlchemy job and dispatch-intent storage and Alembic
+migrations are implemented in US-004.1; see [Database migrations](database-migrations.md).
 
 ## Design patterns
 

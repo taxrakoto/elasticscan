@@ -7,6 +7,8 @@ RUN --mount=type=cache,target=/root/.cache/uv uv pip install --system --require-
 RUN useradd --uid 10001 --create-home app
 COPY app app
 COPY scripts scripts
+COPY alembic.ini .
+COPY migrations migrations
 COPY docker/keycloak/realm.json /app/docker/keycloak/realm.json
 USER app
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
