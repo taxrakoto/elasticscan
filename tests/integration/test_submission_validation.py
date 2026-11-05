@@ -9,14 +9,15 @@ from unittest.mock import Mock
 
 from fastapi import FastAPI, Response
 
-from tests.submission_contract import examples, submission_model
+from app.schemas import ZapSubmission
+from tests.submission_contract import examples
 
 
-def validation_app(model, handler):
+def validation_app(handler):
     app = FastAPI()
 
     @app.post('/scan', status_code=202)
-    async def submit(body: model):
+    async def submit(body: ZapSubmission):
         handler(body)
         return Response(status_code=202)
 
@@ -49,26 +50,24 @@ async def post_json(app, payload):
 
 class SubmissionValidationTests(unittest.IsolatedAsyncioTestCase):
     async def test_valid_input_reaches_the_handler_as_a_typed_submission(self):
-        model = submission_model(self)
         for example in examples()['valid']:
             with self.subTest(example=example['name']):
                 handler = Mock()
-                app = validation_app(model, handler)
+                app = validation_app(handler)
 
                 status, _ = await post_json(app, example['payload'])
 
                 self.assertEqual(status, 202)
                 handler.assert_called_once()
                 submission = handler.call_args.args[0]
-                self.assertIsInstance(submission, model)
+                self.assertIsInstance(submission, ZapSubmission)
                 self.assertEqual(submission.model_dump(mode='json'), example['payload'])
 
     async def test_invalid_input_returns_structured_422_before_the_handler_runs(self):
-        model = submission_model(self)
         for example in examples()['invalid']:
             with self.subTest(example=example['name']):
                 handler = Mock()
-                app = validation_app(model, handler)
+                app = validation_app(handler)
 
                 status, body = await post_json(app, example['payload'])
 

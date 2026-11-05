@@ -1,10 +1,10 @@
-# US-003.1: submission-schema TDD red phase
+# US-003.1: submission-schema TDD
 
 These tests describe the first submission-schema behavior for US-003.1, tracing
-to FR-001/FR-002 and the relevant validation behavior in AC-002. Production
-application files are unchanged.
+to FR-001/FR-002 and the relevant validation behavior in AC-002. The schema implementation
+is in `app/schemas/submission.py`, with its public types exported by `app.schemas`.
 
-The intended public interface is `app.schemas.ScanSubmission`, a Pydantic model
+The public interface is `app.schemas.ZapSubmission`, a Pydantic model
 with `model_validate`, `model_dump`, and `model_dump_json`. Tests exercise public
 input/output behavior rather than private validators or model configuration.
 
@@ -14,11 +14,14 @@ empty, non-string, or non-HTTP URLs; invalid parameter objects; and unknown root
 and nested fields, including an untrusted ownership field.
 
 Unit tests check typed validation, field-level error details, and JSON output.
-Integration tests mount that same model on a test-only FastAPI route, call it
-directly through ASGI, and verify invalid input returns structured HTTP 422 without
-calling the handler. A positive case verifies that valid input reaches the handler
-as a typed model. The handler spy records admission only; it does not model a
-database or implement the production submission endpoint.
+Integration tests embed a small FastAPI application with a test-only `/scan`
+route. They verify that FastAPI validates `ZapSubmission`, returns structured
+HTTP 422 for invalid input, and does not call the handler when validation fails.
+Valid input reaches the handler as a typed model. The handler spy records calls
+only; it does not persist jobs or perform scanning.
+
+These tests cover the integration of the Pydantic schema with FastAPI. They do
+not exercise `app.main.app`, which exposes only the bootstrap liveness endpoint.
 
 ## Run
 
@@ -33,10 +36,20 @@ docker run --rm --network none --read-only --mount "type=bind,src=$PWD,dst=/work
 The bind mount runs the current source and tests. The runner uses Python's standard
 `unittest` library and the application's existing locked FastAPI/Pydantic packages.
 
-The expected initial red result is five assertion failures stating that
-`app.schemas` must expose `ScanSubmission`. Discovery and imports must succeed;
-a missing test dependency, collection error, or external service failure is not
-the intended red result. No test is skipped or marked as an expected failure.
+## TDD verification
+
+The initial red run produced five assertion failures stating that `app.schemas`
+must expose `ZapSubmission`; discovery and imports succeeded. No test was skipped
+or marked as an expected failure.
+
+On 2026-11-05, the schema and embedded-FastAPI integration suite passed all
+five tests using two valid and 21 invalid request examples. The embedded test
+application is the retained integration-test scope; the production `/scan`
+endpoint has been removed.
+
+`ZapSubmission` requires the literal scan type `zap` and nested `ZapParameters`.
+Both models forbid extra fields; `AnyHttpUrl` validates HTTP/HTTPS URL syntax and
+provides JSON serialization. The models perform no DNS lookups or persistence.
 
 The fixture contract version identifies the test examples; it does not add a
 version field to the public submission JSON or establish the other cross-component
