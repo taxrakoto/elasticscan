@@ -73,3 +73,22 @@ PostgreSQL must be healthy and the API image rebuilt with the updated lock.
 Without the flag, the six database tests are explicitly skipped. On 2026-11-05,
 the full suite passed all 11 tests against PostgreSQL 16.6. See
 [Database migrations](../docs/database-migrations.md) for schema and deployment details.
+
+## US-001.1: trusted token validation
+
+- `unit/test_token_validation.py` verifies signatures and claims using ephemeral
+  RSA keys and a controlled JWKS response, with no network.
+- `integration/test_authentication.py` verifies a test-only protected FastAPI route,
+  uniform HTTP 401 with a Bearer challenge, OpenAPI security, startup configuration
+  validation, and public production liveness without key retrieval.
+- `integration/test_keycloak_authentication.py` uses actual local provider tokens
+  and JWKS. Enable it with `RUN_KEYCLOAK_TESTS=1`; otherwise it is explicitly skipped.
+
+Run all tests, including live PostgreSQL and Keycloak:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_KEYCLOAK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
+```
+
+These checks do not create production scan routes or establish team authorization.
+See [Authentication](../docs/authentication.md) for configuration and coverage.

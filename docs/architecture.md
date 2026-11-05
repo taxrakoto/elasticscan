@@ -9,6 +9,9 @@ OpenAPI, PostgreSQL and messaging infrastructure are provisioned, and Keycloak
 provides development identities for two teams. Dispatcher and worker processes
 remain idle placeholders. SQLAlchemy job and dispatch-intent storage and Alembic
 migrations are implemented in US-004.1; see [Database migrations](database-migrations.md).
+US-001.1 implements trusted JWT validation and a reusable FastAPI authentication
+dependency; see [Authentication](authentication.md). Job routes and team authorization
+remain pending.
 
 ## Design patterns
 

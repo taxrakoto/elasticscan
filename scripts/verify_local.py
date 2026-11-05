@@ -1,14 +1,20 @@
-"""Bootstrap integration checks. Does not claim API authorization or scan acceptance."""
+"""Bootstrap checks; run as python -m scripts.verify_local from the project root.
+
+Does not claim team authorization or scan acceptance.
+"""
 import json
 import os
 import time
 import uuid
+from dataclasses import replace
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import boto3
 import jwt
 import psycopg
+
+from app.core.auth import OIDCSettings, TokenValidator
 
 
 def load_json(url, data=None):
@@ -17,32 +23,26 @@ def load_json(url, data=None):
 
 
 def verify_identity():
-    keys = load_json(os.environ['OIDC_JWKS_URL'])['keys']
+    settings = OIDCSettings.from_environment()
+    validator = TokenValidator(settings)
     teams = {}
     for username in ('alice', 'alice-peer', 'bob'):
         data = urlencode({'grant_type': 'password', 'client_id': 'elasticscan-dev',
                           'username': username, 'password': os.environ['LOCAL_USER_PASSWORD']}).encode()
         token = load_json('http://keycloak:8080/realms/elasticscan/protocol/openid-connect/token', data)['access_token']
-        header = jwt.get_unverified_header(token)
-        key = jwt.PyJWK.from_dict(next(key for key in keys if key['kid'] == header['kid'])).key
-        options = {'require': ['exp', 'iat', 'iss', 'aud', 'sub']}
-        claims = jwt.decode(token, key, algorithms=['RS256'], audience=os.environ['OIDC_AUDIENCE'],
-                            issuer=os.environ['OIDC_ISSUER'], options=options)
+        claims = validator.validate(token)
         teams[username] = claims[os.environ['OIDC_TEAM_CLAIM']]
         prefix, signature = token.rsplit('.', 1)
         corrupted = prefix + '.' + ('A' if signature[0] != 'A' else 'B') + signature[1:]
         try:
-            jwt.decode(corrupted, key, algorithms=['RS256'], audience=os.environ['OIDC_AUDIENCE'],
-                       issuer=os.environ['OIDC_ISSUER'], options=options)
-        except jwt.InvalidSignatureError:
+            validator.validate(corrupted)
+        except jwt.InvalidTokenError:
             pass
         else:
             raise AssertionError('A corrupted signature was accepted')
         for override in ({'audience': 'wrong-api'}, {'issuer': 'http://untrusted.invalid'}):
-            validation = {'audience': os.environ['OIDC_AUDIENCE'], 'issuer': os.environ['OIDC_ISSUER']}
-            validation.update(override)
             try:
-                jwt.decode(token, key, algorithms=['RS256'], options=options, **validation)
+                TokenValidator(replace(settings, **override)).validate(token)
             except jwt.InvalidTokenError:
                 pass
             else:
@@ -100,7 +100,7 @@ def main():
     print('PASS: API liveness and OpenAPI')
     verify_identity()
     verify_messaging()
-    print('Bootstrap checks passed. Scan routes, API JWT enforcement, transactional acceptance, and team isolation await their feature stories.')
+    print('Bootstrap checks passed. Protected scan routes, transactional acceptance, and team isolation await their feature stories.')
 
 
 if __name__ == '__main__':

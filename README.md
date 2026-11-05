@@ -9,17 +9,19 @@ The MVP uses OWASP ZAP baseline scanning against authorized, allowlisted public 
 The local bootstrap stack is implemented: API liveness, PostgreSQL, Keycloak with
 two team fixtures, LocalStack SNS/SQS provisioning, and separate idle dispatcher
 and ZAP worker processes. US-004.1 adds SQLAlchemy job/dispatch-intent storage and
-versioned Alembic migrations. Scan endpoints, JWT enforcement in the API,
+versioned Alembic migrations. US-001.1 adds trusted JWT validation and a reusable
+FastAPI bearer-authentication dependency. Scan endpoints, team authorization,
 transactional acceptance, dispatch, and scanner execution remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See
-[Database migrations](docs/database-migrations.md) for applying and evolving the schema.
+[Database migrations](docs/database-migrations.md) for applying and evolving the schema,
+and [Authentication](docs/authentication.md) for trust settings and verification.
 
 ```sh
 python3 scripts/setup_local.py
 docker compose up --build -d --wait --wait-timeout 240
-docker compose exec -T api python scripts/verify_local.py
+docker compose exec -T api python -m scripts.verify_local
 ```
 
 ## Project structure

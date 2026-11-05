@@ -19,7 +19,7 @@ ZAP image. Run these commands from `elasticscan/`:
 python3 scripts/setup_local.py
 docker compose up --build -d --wait --wait-timeout 240
 docker compose ps
-docker compose exec -T api python scripts/verify_local.py
+docker compose exec -T api python -m scripts.verify_local
 curl --fail http://localhost:8000/health/live
 ```
 
@@ -38,8 +38,8 @@ container recreation imports the same client and fixture identities with fresh
 signing keys. Restart API validators or refresh their key caches after recreation.
 
 `verify_local.py` checks a real PostgreSQL connection, API liveness, cryptographic
-JWT validation against the configured JWKS, audience/issuer rejection, three
-users' team claims, queue source policy and retry configuration, and delivery of
+JWT validation through the application validator against the configured JWKS,
+audience/issuer rejection, three users' team claims, queue source policy and retry configuration, and delivery of
 `zap` messages while filtering another scan type. It deletes only its own marker
 messages. Run it against this bootstrap stack before implementing consumers;
 a future active worker could consume its messages. It refuses real AWS endpoints.
@@ -152,9 +152,10 @@ development configuration.
 
 US-004.1 provides SQLAlchemy models and versioned migrations. Run the commands in
 [Database migrations](database-migrations.md) to create or update the schema;
-a healthy PostgreSQL instance alone does not imply the schema exists. US-001.1 adds
-API token validation using the OIDC settings above. All future scan operations
-must require JWT validation and team-scoped authorization. This task exposes only
+a healthy PostgreSQL instance alone does not imply the schema exists. US-001.1 provides
+trusted token validation and the `require_identity` dependency using the OIDC
+settings above; see [Authentication](authentication.md) for behavior and tests.
+All future scan operations must require JWT validation and team-scoped authorization. This task exposes only
 a public liveness endpoint, and does not demonstrate API-level team isolation.
 US-006 and US-007 replace the idle dispatcher and worker commands with actual
 entry points while preserving the separate images and configuration. The worker
