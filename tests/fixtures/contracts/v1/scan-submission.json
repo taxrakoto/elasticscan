@@ -263,6 +263,39 @@
       ]
     },
     {
+      "name": "untrusted_creator_field",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/"
+        },
+        "created_by": "other-subject"
+      },
+      "error_location": ["created_by"]
+    },
+    {
+      "name": "untrusted_nested_team_field",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/",
+          "team_id": "team-beta"
+        }
+      },
+      "error_location": ["parameters", "team_id"]
+    },
+    {
+      "name": "untrusted_nested_creator_field",
+      "payload": {
+        "scan_type": "zap",
+        "parameters": {
+          "url": "https://scan.example.invalid/",
+          "created_by": "other-subject"
+        }
+      },
+      "error_location": ["parameters", "created_by"]
+    },
+    {
       "name": "unknown_parameter_field",
       "payload": {
         "scan_type": "zap",

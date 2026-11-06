@@ -1,4 +1,4 @@
-# Database storage and migrations (US-004.1)
+# Database storage, ownership, and migrations (US-004.1, US-002.2)
 
 SQLAlchemy models describe the desired tables in Python. Alembic revisions describe
 how to change PostgreSQL to match them. Importing models or starting the API does
@@ -44,8 +44,42 @@ when a job is physically removed. Safe deletion and tombstones are later work.
 Database checks enforce basic state/outcome consistency, required ownership,
 JSON objects, nonnegative attempt counts, and paired claim/lease fields. The
 trigger rejects changes to accepted identity and parameters even through raw SQL.
-Authorization, scanner-specific parameter/result validation, guarded state
-transitions, bounded recovery, and cancellation rules remain later stories.
+Team-context authorization is implemented in US-002.1 and ownership assignment
+in US-002.2. Team-scoped queries, scanner-specific result validation, guarded
+state transitions, bounded recovery, and cancellation rules remain later stories.
+
+## Verified immutable ownership
+
+`app/repositories/jobs.py` provides `create_pending_job(session, *, submission,
+context)`. It takes a validated `ZapSubmission` and a `TeamContext` from verified
+authorization, explicitly copying only the context's `team_id` and `created_by`
+into ownership columns. The request schema rejects both fields at the root and
+inside `parameters`; it never supplies ownership. The repository does not accept
+separate ownership overrides or arbitrary model keyword arguments.
+
+The context is a trusted internal input, not a credential: type annotations and
+the frozen dataclass cannot authenticate arbitrary Python callers. Future routes
+must obtain context through `require_team_context`, not construct it from JSON.
+
+`session.flush()` inserts the job and obtains its UUID/defaults without committing.
+The caller controls commit/rollback and must add dispatch intent in the later
+atomic acceptance operation. This function alone does not acknowledge accepted
+work or guarantee a matching outbox row.
+
+Revision `0001` already defines required ownership and `jobs_protect_identity`.
+No schema change or new migration is required. The trigger compares old and new
+ownership and rejects transfer with SQLSTATE `23514`. It applies to ordinary ORM
+updates, bulk updates, and raw SQL, so future worker and maintenance writes cannot
+transfer ownership while the trigger is active. Execution metadata can change
+without changing ownership.
+
+This is defense in depth: request validation rejects ownership fields, the
+repository maps verified context, and PostgreSQL prevents later transfer. A
+database owner or superuser capable of disabling triggers is outside that
+guarantee. Restricted service roles belong to deployment security work; these
+tests exercise write mechanisms, not separate deployed worker/maintenance roles.
+Database constraints alone also cannot verify that an arbitrary initial insert
+came from an authenticated user; application creation must use the trusted path.
 
 ## Use transactions
 
@@ -54,29 +88,31 @@ connections at import time. A caller owns the transaction boundary:
 
 ```python
 from app.db.session import make_engine, make_session_factory
-from app.models import Job, DispatchIntent
+from app.models import DispatchIntent
+from app.repositories.jobs import create_pending_job
 
 engine = make_engine()
 Session = make_session_factory(engine)
 try:
+    # submission is validated; context comes from verified authorization.
     with Session.begin() as session:
-        job = Job(
-            team_id=verified_team_id,
-            created_by=verified_subject,
-            scan_type=submission.scan_type,
-            parameters=submission.parameters.model_dump(mode='json'),
+        job = create_pending_job(
+            session,
+            submission=submission,
+            context=context,
         )
-        session.add(job)
-        session.flush()  # Assign the UUID and insert the referenced job first.
         session.add(DispatchIntent(job_id=job.job_id))
 finally:
     engine.dispose()
 ```
 
-This illustrates the storage primitives. The production acceptance workflow,
-rollback tests, HTTP acknowledgment, and verified identity integration belong to
-US-004.2, US-003.2, and US-002.2. No submission route or publisher is added here.
+This illustrates the storage primitives and verified ownership integration. The
+production atomic acceptance workflow and rollback tests belong to US-004.2;
+HTTP acknowledgment belongs to US-003.2. No submission route or publisher is added here.
 The schema alone does not force every job insertion to include an intent.
+
+See the [Repository](design-pattern/repository.md) and
+[Value Object](design-pattern/value-object.md) pattern documents for this handoff.
 
 ## Change the schema later
 
@@ -114,6 +150,11 @@ and removes that schema afterwards. The local test role must be allowed to creat
 schemas. No existing application tables or records are reset. Without
 `RUN_POSTGRES_TESTS=1`, the database tests are explicitly skipped; the submission
 suite can still run offline.
+
+US-002.2 adds signed-token-to-PostgreSQL ownership tests for two teams, another
+member of the same team, and explicit multi-team selection. It tests transfer
+rejection through object, bulk, and raw-SQL updates, confirms original ownership
+after each rejection, and verifies permitted metadata updates preserve ownership.
 
 References: [Alembic tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
 and [SQLAlchemy PostgreSQL documentation](https://docs.sqlalchemy.org/en/20/dialects/postgresql.html).

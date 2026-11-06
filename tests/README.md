@@ -13,6 +13,10 @@ It covers HTTP/HTTPS ZAP requests; missing fields; unsupported tools; malformed,
 empty, non-string, or non-HTTP URLs; invalid parameter objects; and unknown root
 and nested fields, including an untrusted ownership field.
 
+US-002.2 extends the invalid examples from 21 to 24, adding creator and nested
+ownership fields alongside the existing root-level team field. These examples
+verify that neither `team_id` nor `created_by` can enter at either request level.
+
 Unit tests check typed validation, field-level error details, and JSON output.
 Integration tests embed a small FastAPI application with a test-only `/scan`
 route. They verify that FastAPI validates `ZapSubmission`, returns structured
@@ -127,3 +131,42 @@ and Keycloak. Before the successful live run, Keycloak's documented missing-tabl
 fault returned HTTP 500 during token issuance; recreating only its development
 container from the existing realm import restored the provider. No application
 code change was needed for that fault.
+
+## US-002.2: persisted immutable ownership
+
+`integration/test_job_storage.py` adds three PostgreSQL tests:
+
+- A signed JWT is verified and resolved into `TeamContext`, then passed with a
+  validated submission to `create_pending_job`. Committed ownership is reloaded
+  through a fresh connection pool for two teams, two members of one team, and a
+  multi-team caller with explicit selection.
+- Both `team_id` and `created_by` changes are rejected through ORM object edits,
+  bulk updates, and direct SQL. Each attempt must fail with SQLSTATE `23514`, and
+  original ownership is reloaded after each rollback.
+- Permitted execution metadata updates through ORM and raw SQL preserve ownership.
+
+Run the PostgreSQL suite using the live command above, or focus on storage with:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_job_storage -v
+```
+
+The existing submission unit and HTTP tests automatically consume the new
+ownership rejection examples; HTTP validation must return 422 without calling
+the handler. The test-only submission route does not persist jobs. PostgreSQL
+tests use isolated schemas and the real initial migration; no migration change
+is needed for this task.
+
+These checks establish verified ownership on creation and database transfer
+protection, not a production submission endpoint, atomic outbox acceptance,
+team-scoped read API, or deployed worker/maintenance roles. Restricted database
+service identities and actual worker processing are subsequent work.
+
+On 2026-11-06, all five submission schema/HTTP tests passed with two valid and
+24 invalid examples, and all nine PostgreSQL storage tests passed. Full discovery
+with PostgreSQL and Keycloak enabled passed all 41 tests. The first full run
+passed all 37 non-Keycloak tests but failed during Keycloak setup with HTTP 500;
+its log confirmed the known missing session-table fault. Recreating the local
+development Keycloak container from the existing realm import restored token
+issuance and the subsequent full run passed. Syntax, fixture validity/unique
+names, local documentation links, and Git whitespace checks also passed.

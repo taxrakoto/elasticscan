@@ -14,7 +14,11 @@ dependency. US-002.1 adds a team-context dependency: bearer token → verified
 claims → authorized `TeamContext` → future job handler. It validates configured
 membership claims and an optional `X-Team-ID` selector; multi-team callers must
 select a member team. See [Authentication](authentication.md) for the contract.
-Job routes and team-scoped persistence operations remain pending.
+US-002.2 connects the context to `app/repositories/jobs.py`: the repository inserts
+ownership from `TeamContext`, while the existing database trigger rejects later
+ownership changes through object edits, bulk updates, or raw SQL. The caller
+owns the transaction; the function flushes the insert without committing.
+Job routes, team-scoped reads, and atomic job/outbox acceptance remain pending.
 
 ## Design patterns
 
@@ -32,6 +36,8 @@ verification requirements.
   identity and claim-mapping settings to the team authorization dependency.
 - [Value Object](design-pattern/value-object.md): carry the resolved team and
   current caller together in an immutable `TeamContext`.
+- [Repository](design-pattern/repository.md): insert validated jobs with explicit
+  ownership mapping, leaving transaction orchestration to the caller.
 
 The outbox and idempotent consumer currently describe proposed feature behavior.
 Publish–subscribe infrastructure is configured locally, while application

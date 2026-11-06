@@ -4,8 +4,9 @@
 dependency. They authenticate JWT access tokens using the existing PyJWT/crypto
 dependency. `app/core/team.py` adds `require_team_context` to resolve authorized
 team membership after authentication. Attaching protection to each job endpoint
-and the final endpoint regression remain US-001.3; ownership persistence and full
-job-isolation acceptance remain US-002.2/US-002.3.
+and the final endpoint regression remain US-001.3. US-002.2 consumes verified
+context for job ownership persistence; full job-isolation acceptance remains
+US-002.3. See [Database storage and migrations](database-migrations.md).
 
 ## Trust configuration
 
@@ -136,8 +137,9 @@ Production providers must establish the same administrator-controlled mapping.
 
 Existing JWTs retain their signed membership until expiration. This resolver
 does not perform live membership lookups or immediate revocation. It also does
-not implement roles, administrative cross-team access, job persistence, or
-team-scoped queries. A selected authorized team still must be used as a query
+not implement roles, administrative cross-team access, or team-scoped queries.
+The job repository now uses resolved context for ownership on creation; request
+bodies cannot supply ownership. The authorized team must still be used as a query
 constraint; later cross-team job access must return the same HTTP 404 as an
 unknown job. Denying an unauthorized selector with HTTP 403 does not reveal a
 job's existence.

@@ -8,13 +8,16 @@ from alembic import command
 from alembic.config import Config
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy import create_engine, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 
+from app.core.team import TeamSettings, resolve_team_context
 from app.db.base import Base
 from app.db.session import database_url, make_engine, make_session_factory
 from app.models import DispatchIntent, Job
+from app.repositories.jobs import create_pending_job
 from app.schemas import ZapSubmission
+from tests.token_fixtures import TokenFixtures
 
 
 @unittest.skipUnless(os.environ.get('RUN_POSTGRES_TESTS') == '1', 'Set RUN_POSTGRES_TESTS=1 for real PostgreSQL tests')
@@ -83,6 +86,129 @@ class JobStorageTests(unittest.TestCase):
             self.assertEqual(intent.schema_version, 1)
             self.assertEqual(intent.attempt_count, 0)
             self.assertIsNone(intent.published_at)
+
+    def save_owned_job(
+        self,
+        subject='alice',
+        teams=('team-alpha',),
+        selectors=None,
+    ):
+        tokens = TokenFixtures()
+        token = tokens.sign(
+            tokens.claims(sub=subject, team_ids=list(teams)),
+        )
+        verified_claims = tokens.validator().validate(token)
+        context = resolve_team_context(
+            verified_claims, TeamSettings(), selectors,
+        )
+        submission = ZapSubmission.model_validate({
+            'scan_type': 'zap',
+            'parameters': {'url': 'https://example.com/'},
+        })
+
+        with self.sessions.begin() as session:
+            job = create_pending_job(
+                session, submission=submission, context=context,
+            )
+            job_id = job.job_id
+
+        return job_id
+
+    def test_creation_persists_verified_team_and_creator(self):
+        cases = (
+            ('alice', ('team-alpha',), None, 'team-alpha'),
+            ('alice-peer', ('team-alpha',), None, 'team-alpha'),
+            ('bob', ('team-beta',), None, 'team-beta'),
+            (
+                'multi-team-user',
+                ('team-alpha', 'team-beta'),
+                ['team-beta'],
+                'team-beta',
+            ),
+        )
+
+        for subject, teams, selectors, expected_team in cases:
+            with self.subTest(subject=subject):
+                job_id = self.save_owned_job(
+                    subject=subject, teams=teams, selectors=selectors,
+                )
+
+                # A fresh connection pool rules out session-cache evidence.
+                self.engine.dispose()
+                with self.sessions() as session:
+                    job = session.get(Job, job_id)
+                    self.assertIsNotNone(job)
+                    self.assertEqual(job.team_id, expected_team)
+                    self.assertEqual(job.created_by, subject)
+                    self.assertEqual(job.status, 'pending')
+                    self.assertEqual(job.scan_type, 'zap')
+                    self.assertEqual(
+                        job.parameters, {'url': 'https://example.com/'},
+                    )
+
+    def test_ownership_transfer_is_rejected_for_all_update_paths(self):
+        job_id = self.save_owned_job()
+        changes = (
+            ('team_id', 'team-beta'),
+            ('created_by', 'other-subject'),
+        )
+
+        for mode in ('orm', 'bulk', 'sql'):
+            for field, value in changes:
+                with self.subTest(mode=mode, field=field):
+                    with self.assertRaises(IntegrityError) as error:
+                        with self.sessions.begin() as session:
+                            if mode == 'orm':
+                                job = session.get(Job, job_id)
+                                setattr(job, field, value)
+                                session.flush()
+                            elif mode == 'bulk':
+                                session.execute(
+                                    update(Job)
+                                    .where(Job.job_id == job_id)
+                                    .values(**{field: value})
+                                )
+                            else:
+                                # field comes only from the fixed cases above.
+                                session.execute(
+                                    text(
+                                        f'UPDATE jobs SET {field} = :value '
+                                        'WHERE job_id = :id'
+                                    ),
+                                    {'value': value, 'id': job_id},
+                                )
+
+                    self.assertEqual(error.exception.orig.sqlstate, '23514')
+                    with self.sessions() as session:
+                        job = session.get(Job, job_id)
+                        self.assertEqual(job.team_id, 'team-alpha')
+                        self.assertEqual(job.created_by, 'alice')
+
+    def test_execution_metadata_updates_preserve_ownership(self):
+        job_id = self.save_owned_job()
+
+        with self.sessions.begin() as session:
+            job = session.get(Job, job_id)
+            job.worker_id = 'worker-fixture'
+            job.attempt_count = 1
+
+        with self.engine.begin() as connection:
+            connection.execute(
+                text(
+                    'UPDATE jobs '
+                    'SET heartbeat_at = statement_timestamp() '
+                    'WHERE job_id = :id'
+                ),
+                {'id': job_id},
+            )
+
+        with self.sessions() as session:
+            job = session.get(Job, job_id)
+            self.assertEqual(job.team_id, 'team-alpha')
+            self.assertEqual(job.created_by, 'alice')
+            self.assertEqual(job.worker_id, 'worker-fixture')
+            self.assertEqual(job.attempt_count, 1)
+            self.assertIsNotNone(job.heartbeat_at)
 
     def test_applied_migration_matches_models_and_can_be_reapplied(self):
         self.migrate('upgrade', 'head')

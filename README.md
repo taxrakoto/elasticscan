@@ -12,8 +12,10 @@ and ZAP worker processes. US-004.1 adds SQLAlchemy job/dispatch-intent storage a
 versioned Alembic migrations. US-001.1 adds trusted JWT validation and a reusable
 FastAPI bearer-authentication dependency. US-002.1 adds authorized team-context
 resolution from verified membership claims, including explicit selection for
-multi-team callers. Scan endpoints, team-scoped persistence operations,
-transactional acceptance, dispatch, and scanner execution remain feature work.
+multi-team callers. US-002.2 adds pending-job insertion using that verified
+context, with immutable ownership enforced by the existing database trigger.
+Scan endpoints, team-scoped retrieval, transactional acceptance, dispatch, and
+scanner execution remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See
