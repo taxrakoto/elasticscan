@@ -170,3 +170,32 @@ its log confirmed the known missing session-table fault. Recreating the local
 development Keycloak container from the existing realm import restored token
 issuance and the subsequent full run passed. Syntax, fixture validity/unique
 names, local documentation links, and Git whitespace checks also passed.
+
+## US-004.2: atomic database acceptance
+
+`app/services/acceptance.py` coordinates the job and dispatch intent in one
+transaction, returning `AcceptedScan` only after commit. Five additional real
+PostgreSQL tests in `integration/test_job_storage.py` verify:
+
+- A committed pending job and its unpublished intent reload through a fresh pool.
+- A simulated failure after the job insert leaves neither record committed.
+- A real constraint violation on dispatch insertion rolls back the job too.
+- A simulated failure after both inserts just before commit rolls back both.
+- Another connection sees neither record before commit, then sees both afterward.
+
+Each test migrates its own disposable schema. Patches and transaction event
+listeners inject failures only in tests and are removed afterward. These checks
+verify the reusable database service; they do not create a public scan endpoint,
+permanent demonstration jobs, or a working publisher.
+
+Run the storage-only command above for focused checks, or enable PostgreSQL and
+Keycloak with the full-suite command above. HTTP acknowledgment, API restart,
+SNS outage/retry, and worker recovery acceptance remain later stories.
+
+On 2026-11-06, all 14 PostgreSQL storage tests passed, including the five new
+acceptance cases. Full discovery with PostgreSQL and Keycloak enabled passed all
+46 tests. The first full run passed all 42 non-Keycloak tests but failed during
+provider setup with HTTP 500; logs confirmed the known missing session-table
+fault. After recreating development Keycloak from its existing realm import, the
+full suite passed. Python syntax, local documentation links, and Git whitespace
+checks also passed. Test schemas and their job/intent rows were cleaned up.

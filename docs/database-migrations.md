@@ -1,4 +1,4 @@
-# Database storage, ownership, and migrations (US-004.1, US-002.2)
+# Database storage, ownership, and atomic acceptance (US-004.1, US-002.2, US-004.2)
 
 SQLAlchemy models describe the desired tables in Python. Alembic revisions describe
 how to change PostgreSQL to match them. Importing models or starting the API does
@@ -62,9 +62,9 @@ the frozen dataclass cannot authenticate arbitrary Python callers. Future routes
 must obtain context through `require_team_context`, not construct it from JSON.
 
 `session.flush()` inserts the job and obtains its UUID/defaults without committing.
-The caller controls commit/rollback and must add dispatch intent in the later
-atomic acceptance operation. This function alone does not acknowledge accepted
-work or guarantee a matching outbox row.
+The caller controls commit/rollback. US-004.2's `accept_scan` service now supplies
+that boundary and adds dispatch intent. The lower-level repository function alone
+does not acknowledge accepted work or guarantee a matching outbox row.
 
 Revision `0001` already defines required ownership and `jobs_protect_identity`.
 No schema change or new migration is required. The trigger compares old and new
@@ -81,37 +81,56 @@ tests exercise write mechanisms, not separate deployed worker/maintenance roles.
 Database constraints alone also cannot verify that an arbitrary initial insert
 came from an authenticated user; application creation must use the trusted path.
 
-## Use transactions
+## Atomic acceptance
 
 `app/db/session.py` provides explicit engine and session factories, without opening
-connections at import time. A caller owns the transaction boundary:
+connections at import time. `app/services/acceptance.py` provides
+`accept_scan(sessions, *, submission, context)` and owns the complete acceptance
+transaction. Supply a validated submission and verified authorized context:
 
 ```python
 from app.db.session import make_engine, make_session_factory
-from app.models import DispatchIntent
-from app.repositories.jobs import create_pending_job
+from app.services.acceptance import accept_scan
 
 engine = make_engine()
-Session = make_session_factory(engine)
+sessions = make_session_factory(engine)
 try:
     # submission is validated; context comes from verified authorization.
-    with Session.begin() as session:
-        job = create_pending_job(
-            session,
-            submission=submission,
-            context=context,
-        )
-        session.add(DispatchIntent(job_id=job.job_id))
+    accepted = accept_scan(
+        sessions,
+        submission=submission,
+        context=context,
+    )
+    # Both records have committed before accepted becomes available here.
 finally:
     engine.dispose()
 ```
 
-This illustrates the storage primitives and verified ownership integration. The
-production atomic acceptance workflow and rollback tests belong to US-004.2;
-HTTP acknowledgment belongs to US-003.2. No submission route or publisher is added here.
-The schema alone does not force every job insertion to include an intent.
+The service opens a session/transaction, inserts the job using the existing
+ownership repository, adds its dispatch intent, flushes both, and lets the
+transaction context commit. It returns `AcceptedScan(job_id, scan_type, pending)`
+only after successful exit. This frozen value object is a snapshot of acceptance,
+not live job status, and does not depend on an open SQLAlchemy session.
 
-See the [Repository](design-pattern/repository.md) and
+Flush sends inserts to PostgreSQL inside the transaction; commit makes the pair
+durable and visible to other sessions. Insert errors and failures before commit
+roll back both. Exceptions propagate; no acceptance result is returned on error.
+The context closes the session on success or failure. The service does not join
+an existing caller transaction and should be called with the session factory.
+
+A connection loss during commit may leave its outcome unknown to the caller:
+PostgreSQL still commits both records or neither, but an exception does not prove
+that a confirmed rollback occurred. This service does not blindly retry uncertain
+commits or provide request deduplication. Future HTTP outage handling must
+preserve that distinction.
+
+HTTP acknowledgment belongs to US-003.2 and publication/retry behavior to US-006.
+No submission route, network publication, or scanner is added here. The schema
+alone does not force arbitrary direct inserts to include intent; application
+acceptance must use this service.
+
+See [Transactional Outbox](design-pattern/transactional-outbox.md),
+[Repository](design-pattern/repository.md), and
 [Value Object](design-pattern/value-object.md) pattern documents for this handoff.
 
 ## Change the schema later
@@ -155,6 +174,12 @@ US-002.2 adds signed-token-to-PostgreSQL ownership tests for two teams, another
 member of the same team, and explicit multi-team selection. It tests transfer
 rejection through object, bulk, and raw-SQL updates, confirms original ownership
 after each rejection, and verifies permitted metadata updates preserve ownership.
+
+US-004.2 adds five acceptance tests: successful paired commit/reload, rollback
+after the job insert, rollback after a real dispatch constraint violation,
+rollback after both inserts just before commit, and external-session visibility
+only after commit. Failure injection is confined to tests. The visibility check
+uses a separate connection; it does not infer persistence from the ORM cache.
 
 References: [Alembic tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
 and [SQLAlchemy PostgreSQL documentation](https://docs.sqlalchemy.org/en/20/dialects/postgresql.html).

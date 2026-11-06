@@ -14,8 +14,9 @@ FastAPI bearer-authentication dependency. US-002.1 adds authorized team-context
 resolution from verified membership claims, including explicit selection for
 multi-team callers. US-002.2 adds pending-job insertion using that verified
 context, with immutable ownership enforced by the existing database trigger.
-Scan endpoints, team-scoped retrieval, transactional acceptance, dispatch, and
-scanner execution remain feature work.
+US-004.2 adds a reusable acceptance service that commits the job and dispatch
+intent together before returning. Scan endpoints, team-scoped retrieval,
+dispatch, and scanner execution remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See

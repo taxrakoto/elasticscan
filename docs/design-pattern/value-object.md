@@ -28,6 +28,13 @@ authorization and future operations.
 
 ## Benefits, tradeoffs, and limits
 
+US-004.2 also introduces the frozen `AcceptedScan` dataclass in
+`app/services/acceptance.py`. Its `job_id`, `scan_type`, and `pending` acceptance
+status form a value snapshot returned only after the job and dispatch intent
+commit. It is separate from the SQLAlchemy model, so callers need no open session
+to read it. The status describes acceptance time; later worker activity can
+change the persisted job without changing this snapshot.
+
 Named fields make the meaning clearer than a tuple of strings. Immutability
 prevents accidental reassignment during request processing. It does not provide
 a security boundary against code deliberately constructing another context.
@@ -45,6 +52,8 @@ field reassignment. Signed HTTP tests and opt-in Keycloak tests verify that the
 dependency returns the correct team and caller. US-002.2's PostgreSQL tests in
 `tests/integration/test_job_storage.py` follow signed identity through context
 resolution and repository insertion, then reload and verify persisted ownership.
+Atomic acceptance tests verify that the returned snapshot identifies the committed
+job/intent pair, and failures propagate instead of returning an acceptance result.
 
 This supports FR-027 and the ownership-context foundation of AC-017; full job
 isolation acceptance remains pending. See [Repository](repository.md),

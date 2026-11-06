@@ -2,21 +2,23 @@
 import os
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 from uuid import uuid4
 
 from alembic import command
 from alembic.config import Config
 from alembic.autogenerate import compare_metadata
 from alembic.migration import MigrationContext
-from sqlalchemy import create_engine, inspect, select, text, update
+from sqlalchemy import create_engine, event, func, inspect, select, text, update
 from sqlalchemy.exc import IntegrityError
 
-from app.core.team import TeamSettings, resolve_team_context
+from app.core.team import TeamContext, TeamSettings, resolve_team_context
 from app.db.base import Base
 from app.db.session import database_url, make_engine, make_session_factory
 from app.models import DispatchIntent, Job
 from app.repositories.jobs import create_pending_job
 from app.schemas import ZapSubmission
+from app.services.acceptance import accept_scan
 from tests.token_fixtures import TokenFixtures
 
 
@@ -209,6 +211,128 @@ class JobStorageTests(unittest.TestCase):
             self.assertEqual(job.worker_id, 'worker-fixture')
             self.assertEqual(job.attempt_count, 1)
             self.assertIsNotNone(job.heartbeat_at)
+
+    def accept_fixture(self):
+        submission = ZapSubmission.model_validate({
+            'scan_type': 'zap',
+            'parameters': {'url': 'https://example.com/'},
+        })
+        return accept_scan(
+            self.sessions,
+            submission=submission,
+            context=TeamContext('team-alpha', 'fixture-subject'),
+        )
+
+    def assert_acceptance_counts(self, jobs, intents):
+        with self.sessions() as session:
+            self.assertEqual(
+                session.scalar(select(func.count()).select_from(Job)),
+                jobs,
+            )
+            self.assertEqual(
+                session.scalar(select(func.count()).select_from(DispatchIntent)),
+                intents,
+            )
+
+    def test_acceptance_commits_job_and_dispatch_intent(self):
+        accepted = self.accept_fixture()
+        self.assertEqual(accepted.scan_type, 'zap')
+        self.assertEqual(accepted.status, 'pending')
+
+        self.engine.dispose()
+        with self.sessions() as session:
+            job = session.get(Job, accepted.job_id)
+            intent = session.scalar(
+                select(DispatchIntent).where(
+                    DispatchIntent.job_id == accepted.job_id,
+                )
+            )
+
+            self.assertIsNotNone(job)
+            self.assertIsNotNone(intent)
+            self.assertEqual(job.team_id, 'team-alpha')
+            self.assertEqual(job.created_by, 'fixture-subject')
+            self.assertEqual(job.status, 'pending')
+            self.assertEqual(job.parameters, {'url': 'https://example.com/'})
+            self.assertEqual(intent.schema_version, 1)
+            self.assertEqual(intent.attempt_count, 0)
+            self.assertIsNone(intent.published_at)
+            self.assertIsNone(intent.suppressed_at)
+
+        self.assert_acceptance_counts(1, 1)
+
+    def test_acceptance_rolls_back_failure_after_job_insert(self):
+        inserted_ids = []
+
+        def insert_then_fail(session, **kwargs):
+            job = create_pending_job(session, **kwargs)
+            inserted_ids.append(job.job_id)
+            raise RuntimeError('failure after job insert')
+
+        with patch(
+            'app.services.acceptance.create_pending_job',
+            side_effect=insert_then_fail,
+        ):
+            with self.assertRaisesRegex(RuntimeError, 'failure after job insert'):
+                self.accept_fixture()
+
+        self.assertEqual(len(inserted_ids), 1)
+        self.assert_acceptance_counts(0, 0)
+
+    def test_acceptance_rolls_back_invalid_dispatch_intent(self):
+        def invalid_intent(**values):
+            return DispatchIntent(schema_version=0, **values)
+
+        with patch(
+            'app.services.acceptance.DispatchIntent',
+            side_effect=invalid_intent,
+        ):
+            with self.assertRaises(IntegrityError) as error:
+                self.accept_fixture()
+
+        self.assertEqual(error.exception.orig.sqlstate, '23514')
+        self.assert_acceptance_counts(0, 0)
+
+    def test_acceptance_rolls_back_failure_before_commit(self):
+        observed = []
+
+        def fail_before_commit(session):
+            counts = (
+                session.scalar(select(func.count()).select_from(Job)),
+                session.scalar(select(func.count()).select_from(DispatchIntent)),
+            )
+            observed.append(counts)
+            raise RuntimeError('failure before commit')
+
+        event.listen(self.sessions, 'before_commit', fail_before_commit)
+        try:
+            with self.assertRaisesRegex(RuntimeError, 'failure before commit'):
+                self.accept_fixture()
+        finally:
+            event.remove(self.sessions, 'before_commit', fail_before_commit)
+
+        self.assertEqual(observed, [(1, 1)])
+        self.assert_acceptance_counts(0, 0)
+
+    def test_acceptance_records_become_visible_only_after_commit(self):
+        observed = []
+
+        def inspect_before_commit(session):
+            writer_counts = (
+                session.scalar(select(func.count()).select_from(Job)),
+                session.scalar(select(func.count()).select_from(DispatchIntent)),
+            )
+            self.assert_acceptance_counts(0, 0)
+            observed.append(writer_counts)
+
+        event.listen(self.sessions, 'before_commit', inspect_before_commit)
+        try:
+            self.accept_fixture()
+        finally:
+            event.remove(self.sessions, 'before_commit', inspect_before_commit)
+
+        self.assertEqual(observed, [(1, 1)])
+        self.assert_acceptance_counts(1, 1)
 
     def test_applied_migration_matches_models_and_can_be_reapplied(self):
         self.migrate('upgrade', 'head')

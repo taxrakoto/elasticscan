@@ -1,10 +1,41 @@
 # Transactional outbox and background dispatcher
 
-**Status:** Proposed reliability design from the [requirements](../requirements.md),
-Sections 5 and 6.4. The local stack currently runs an idle dispatcher placeholder;
-US-004.1 implements the job and dispatch-intent schema (see the
-[storage guide](../database-migrations.md)). The acceptance transaction, publisher,
-retry loop, and worker recovery logic are not yet implemented. This document describes their intended behavior.
+**Status:** Partially implemented reliability design from the
+[requirements](../requirements.md), Sections 5 and 6.4. US-004.1 implements the
+job/dispatch-intent schema, US-002.2 maps verified ownership during insertion,
+and US-004.2 implements atomic database acceptance with PostgreSQL rollback and
+visibility tests. See the [storage guide](../database-migrations.md).
+The local dispatcher remains an idle placeholder. Public submission, publication,
+retry loops, and worker recovery are not implemented; the flow below describes
+their intended integration.
+
+### Implemented database acceptance
+
+`app/services/acceptance.py` provides `accept_scan(sessions, *, submission,
+context)`. It receives a validated submission and a verified `TeamContext`, then
+opens one session/transaction. The existing `create_pending_job` repository
+inserts the pending job with immutable ownership; the service adds its matching
+`DispatchIntent` and flushes. Successful transaction exit commits both and closes
+the session. Only then does the function return an immutable `AcceptedScan`
+snapshot containing the UUID, scan type, and acceptance status `pending`.
+
+The service makes no SNS, SQS, or scanner calls. It propagates failures instead
+of returning acceptance. Confirmed transaction failures roll back both records;
+a connection loss during commit can leave the caller uncertain about the outcome,
+although the database still commits both or neither. There is no automatic retry
+or request deduplication for uncertain commits.
+
+The schema's foreign key prevents orphan intent, but does not require every
+arbitrary job insert to include intent. Application acceptance must use the
+service. This is the transaction boundary around the existing
+[Repository](repository.md), returning a [Value Object](value-object.md).
+
+Five tests in `tests/integration/test_job_storage.py` exercise successful commit
+and fresh-pool reload, a failure after job insertion, an actual dispatch insert
+constraint violation, failure after both inserts before commit, and separate
+connection visibility only after commit. They use the real migration and
+PostgreSQL, with failure injection confined to the tests. Public HTTP 202/503
+behavior and API-restart/SNS-recovery demonstrations remain later stories.
 
 ### Problem: saving a job and publishing its message
 
@@ -173,8 +204,9 @@ This design supports FR-014 (recoverable dispatch intent), FR-020/FR-021
 Its principal acceptance checks are AC-001, AC-006, AC-007, and AC-008 in the
 [RAD](../requirements.md#10-acceptance-criteria-and-traceability).
 
-Implementation tests must exercise transaction rollback, an API crash after
-commit, SNS failure followed by recovery, competing dispatchers, expired claims,
+Transaction rollback and paired commit visibility are covered in US-004.2.
+Remaining integration tests must exercise an API crash after commit, SNS failure
+followed by recovery, competing dispatchers, expired claims,
 an acknowledgment lost after successful publication, and duplicate worker
 deliveries. Publication failures, oldest unpublished-record age, retry counts,
 and expired claims must be observable without logging bearer tokens, credentials,

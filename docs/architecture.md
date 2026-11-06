@@ -18,7 +18,11 @@ US-002.2 connects the context to `app/repositories/jobs.py`: the repository inse
 ownership from `TeamContext`, while the existing database trigger rejects later
 ownership changes through object edits, bulk updates, or raw SQL. The caller
 owns the transaction; the function flushes the insert without committing.
-Job routes, team-scoped reads, and atomic job/outbox acceptance remain pending.
+US-004.2 adds `app/services/acceptance.py`: validated submission and authorized
+context → acceptance service → one job/dispatch-intent transaction → immutable
+`AcceptedScan` result. The service owns its session and returns only after commit;
+errors roll back the transaction and propagate to the caller. It makes no SNS
+or scanner calls. Job routes and team-scoped reads remain pending.
 
 ## Design patterns
 
@@ -39,10 +43,11 @@ verification requirements.
 - [Repository](design-pattern/repository.md): insert validated jobs with explicit
   ownership mapping, leaving transaction orchestration to the caller.
 
-The outbox and idempotent consumer currently describe proposed feature behavior.
-Publish–subscribe infrastructure is configured locally, while application
-publication and consumption remain pending. Documentation is not evidence that
-the corresponding application logic is implemented.
+The outbox's atomic database acceptance is implemented and covered by PostgreSQL
+rollback and visibility tests. Its publisher, retry loop, and the idempotent
+consumer remain proposed feature behavior. Publish–subscribe infrastructure is
+configured locally, while application publication and consumption remain pending.
+Documentation is not evidence that pending behavior is implemented.
 
 See the [requirements](requirements.md) for the system workflow and acceptance
 criteria, and [local development](local-development.md) for the verified bootstrap

@@ -25,9 +25,10 @@ or a framework. Team-scoped reads and other operations remain later stories.
    object updates, bulk updates, and direct SQL. Allowed metadata updates preserve
    ownership.
 
-The repository returns a `Job` for the future acceptance service to associate
-with dispatch intent. Atomic job/outbox orchestration is US-004.2; this function
-alone does not implement it. No production submission endpoint exists yet.
+The repository returns a `Job` to US-004.2's `accept_scan` service, which associates
+dispatch intent and commits both in one transaction. The repository does not
+commit; the service supplies that boundary and returns an immutable acceptance
+snapshot only after commit. No production submission endpoint exists yet.
 
 ## Benefits, tradeoffs, and guarantees
 
@@ -60,6 +61,8 @@ updates. Each test applies the real migration to its own disposable schema.
 
 Submission fixtures in `tests/fixtures/contracts/v1/scan-submission.json` exercise
 ownership rejection at both request levels through schema and HTTP tests.
+US-004.2 extends storage tests to cover the repository as part of atomic
+acceptance, including paired commit, rollback failures, and transaction visibility.
 
 This supports FR-027/FR-028 and AC-017's ownership foundation. Endpoint filtering,
 shared team retrieval, actual worker/maintenance integration, and complete
