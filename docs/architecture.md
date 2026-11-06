@@ -10,8 +10,11 @@ provides development identities for two teams. Dispatcher and worker processes
 remain idle placeholders. SQLAlchemy job and dispatch-intent storage and Alembic
 migrations are implemented in US-004.1; see [Database migrations](database-migrations.md).
 US-001.1 implements trusted JWT validation and a reusable FastAPI authentication
-dependency; see [Authentication](authentication.md). Job routes and team authorization
-remain pending.
+dependency. US-002.1 adds a team-context dependency: bearer token → verified
+claims → authorized `TeamContext` → future job handler. It validates configured
+membership claims and an optional `X-Team-ID` selector; multi-team callers must
+select a member team. See [Authentication](authentication.md) for the contract.
+Job routes and team-scoped persistence operations remain pending.
 
 ## Design patterns
 
@@ -25,6 +28,10 @@ verification requirements.
   queue deliveries using persisted job claims and terminal-state protection.
 - [Publish–Subscribe](design-pattern/publish-subscribe.md): route SNS publications
   to scanner-specific SQS queues independently of worker instances.
+- [Dependency Injection](design-pattern/dependency-injection.md): supply verified
+  identity and claim-mapping settings to the team authorization dependency.
+- [Value Object](design-pattern/value-object.md): carry the resolved team and
+  current caller together in an immutable `TeamContext`.
 
 The outbox and idempotent consumer currently describe proposed feature behavior.
 Publish–subscribe infrastructure is configured locally, while application

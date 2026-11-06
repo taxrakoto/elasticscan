@@ -4,6 +4,11 @@ from typing import Annotated
 from fastapi import Depends, FastAPI
 
 from app.core.auth import get_token_validator, require_identity
+from app.core.team import (
+    TeamContext,
+    get_team_settings,
+    require_team_context,
+)
 
 
 def authentication_app(validator=None):
@@ -18,7 +23,29 @@ def authentication_app(validator=None):
     return app
 
 
-async def get(app, authorization=None, path='/protected'):
+def team_authorization_app(validator=None, settings=None):
+    app = authentication_app(validator)
+    app.state.team_handler_calls = []
+
+    if settings is not None:
+        app.dependency_overrides[get_team_settings] = lambda: settings
+
+    @app.get('/team-protected')
+    def protected_team(
+        context: Annotated[TeamContext, Depends(require_team_context)],
+    ):
+        app.state.team_handler_calls.append(context)
+        return {
+            'team_id': context.team_id,
+            'created_by': context.created_by,
+        }
+
+    return app
+
+
+async def get(
+    app, authorization=None, path='/protected', extra_headers=(),
+):
     messages = []
 
     async def receive():
@@ -28,6 +55,7 @@ async def get(app, authorization=None, path='/protected'):
         messages.append(message)
 
     headers = [] if authorization is None else [(b'authorization', authorization.encode())]
+    headers.extend(extra_headers)
     await app({
         'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1',
         'method': 'GET', 'scheme': 'http', 'path': path, 'raw_path': path.encode(),

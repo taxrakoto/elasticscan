@@ -10,7 +10,9 @@ The local bootstrap stack is implemented: API liveness, PostgreSQL, Keycloak wit
 two team fixtures, LocalStack SNS/SQS provisioning, and separate idle dispatcher
 and ZAP worker processes. US-004.1 adds SQLAlchemy job/dispatch-intent storage and
 versioned Alembic migrations. US-001.1 adds trusted JWT validation and a reusable
-FastAPI bearer-authentication dependency. Scan endpoints, team authorization,
+FastAPI bearer-authentication dependency. US-002.1 adds authorized team-context
+resolution from verified membership claims, including explicit selection for
+multi-team callers. Scan endpoints, team-scoped persistence operations,
 transactional acceptance, dispatch, and scanner execution remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,

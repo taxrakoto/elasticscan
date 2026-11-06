@@ -90,5 +90,40 @@ Run all tests, including live PostgreSQL and Keycloak:
 docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_KEYCLOAK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
 ```
 
-These checks do not create production scan routes or establish team authorization.
+These checks do not create production scan routes or establish full job isolation.
 See [Authentication](../docs/authentication.md) for configuration and coverage.
+
+## US-002.1: authorized team context
+
+- `unit/test_team_context.py` exercises single-team inference, duplicate
+  membership, explicit multi-team selection, malformed/missing membership,
+  unauthorized selectors, custom mapping without fallback, environment
+  configuration, and immutable context.
+- `integration/test_team_authorization.py` uses signed JWTs and test-only
+  `/team-protected` handlers. It checks HTTP 401/403, no handler execution on
+  denial, custom claim mapping, OpenAPI security/header metadata, and startup
+  rejection of invalid team configuration.
+- `integration/test_keycloak_authentication.py` extends opt-in live verification
+  to Alice and Alice's peer in `team-alpha` and Bob in `team-beta`, with implicit
+  selection, matching explicit selection, and rejected cross-team selectors.
+
+The complete offline command above discovers these tests without external
+services; PostgreSQL and Keycloak checks are skipped unless their flags are set.
+For focused authentication/team checks:
+
+```sh
+docker run --rm --network none --read-only -v "$PWD:/workspace:ro" -w /workspace --entrypoint python elasticscan-api:local -B -m unittest tests.unit.test_token_validation tests.integration.test_authentication tests.unit.test_team_context tests.integration.test_team_authorization -v
+```
+
+The live command above enables both service suites. These checks establish the
+team-context foundation of FR-027 and AC-016/AC-017, not submission, persisted job
+ownership, or full isolation of retrieve/list/cancel/delete operations. No
+production team diagnostic endpoint is created.
+
+On 2026-11-06, the focused authentication/team suite passed all 23 tests. Full
+offline discovery passed 28 tests with 10 service-dependent tests skipped. With
+both integration flags enabled, all 38 tests passed, including real PostgreSQL
+and Keycloak. Before the successful live run, Keycloak's documented missing-table
+fault returned HTTP 500 during token issuance; recreating only its development
+container from the existing realm import restored the provider. No application
+code change was needed for that fault.

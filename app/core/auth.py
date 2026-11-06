@@ -95,7 +95,7 @@ def require_identity(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(bearer)],
     validator: Annotated[TokenValidator, Depends(get_token_validator)],
 ) -> dict[str, Any]:
-    """Authenticate only; authorized team selection belongs to US-002.1."""
+    """Return verified claims for authentication and team authorization."""
     if credentials is not None:
         try:
             return validator.validate(credentials.credentials)

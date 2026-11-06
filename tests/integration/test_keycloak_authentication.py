@@ -9,7 +9,7 @@ from urllib.request import Request, urlopen
 from unittest.mock import patch
 
 from app.core.auth import OIDCSettings, TokenValidator, get_token_validator
-from tests.auth_support import authentication_app, get
+from tests.auth_support import authentication_app, get, team_authorization_app
 
 
 @unittest.skipUnless(os.environ.get('RUN_KEYCLOAK_TESTS') == '1', 'Set RUN_KEYCLOAK_TESTS=1 for local Keycloak tests')
@@ -59,6 +59,39 @@ class KeycloakAuthenticationTests(unittest.IsolatedAsyncioTestCase):
         for authorization in ('Bearer ' + corrupt, None):
             status, _, _ = await get(app, authorization)
             self.assertEqual(status, 401)
+
+    async def test_real_memberships_authorize_only_their_team(self):
+        app = team_authorization_app()
+
+        for username, token in self.tokens.items():
+            expected = 'team-beta' if username == 'bob' else 'team-alpha'
+            other = 'team-alpha' if expected == 'team-beta' else 'team-beta'
+            subject = get_token_validator().validate(token)['sub']
+
+            for selector in (None, expected, other):
+                with self.subTest(user=username, selector=selector):
+                    headers = (
+                        [] if selector is None
+                        else [(b'x-team-id', selector.encode())]
+                    )
+                    status, _, body = await get(
+                        app, 'Bearer ' + token, path='/team-protected',
+                        extra_headers=headers,
+                    )
+                    if selector == other:
+                        self.assertEqual(status, 403)
+                        self.assertEqual(
+                            json.loads(body),
+                            {'detail': 'Missing or unauthorized team context'},
+                        )
+                    else:
+                        self.assertEqual(status, 200)
+                        self.assertEqual(
+                            json.loads(body),
+                            {'team_id': expected, 'created_by': subject},
+                        )
+
+        self.assertEqual(len(app.state.team_handler_calls), 6)
 
     async def test_real_expired_token_is_rejected_without_waiting(self):
         token = self.tokens['alice']

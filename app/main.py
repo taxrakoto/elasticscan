@@ -4,12 +4,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.auth import get_token_validator
+from app.core.team import get_team_settings
 
 
 @asynccontextmanager
 async def lifespan(app):
     # Validate trust configuration at startup. Signing keys are fetched lazily.
     get_token_validator()
+    get_team_settings()
     yield
 
 
