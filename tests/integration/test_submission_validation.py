@@ -24,10 +24,16 @@ def validation_app(handler):
     return app
 
 
-async def post_json(app, payload):
+async def post_json(
+    app, payload, authorization=None, extra_headers=(),
+):
     """Call the real ASGI application without sockets or an extra client library."""
     messages = []
     body = json.dumps(payload).encode()
+    headers = [(b'content-type', b'application/json')]
+    if authorization is not None:
+        headers.append((b'authorization', authorization.encode()))
+    headers.extend(extra_headers)
 
     async def receive():
         return {'type': 'http.request', 'body': body, 'more_body': False}
@@ -39,7 +45,7 @@ async def post_json(app, payload):
         'type': 'http', 'asgi': {'version': '3.0'}, 'http_version': '1.1',
         'method': 'POST', 'scheme': 'http', 'path': '/scan', 'raw_path': b'/scan',
         'root_path': '', 'query_string': b'',
-        'headers': [(b'content-type', b'application/json')],
+        'headers': headers,
         'client': ('127.0.0.1', 12345), 'server': ('testserver', 80),
     }, receive, send)
     status = next(message['status'] for message in messages if message['type'] == 'http.response.start')

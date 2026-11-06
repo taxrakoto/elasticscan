@@ -104,6 +104,22 @@ If changing the local region, change the ARN and queue URL in `.env` consistentl
 
 ## OIDC and trusted team mapping
 
+For the separate initial scan-target configuration, see
+[Initial target policy](target-policy.md). `TARGET_ALLOWED_ORIGINS` defaults to
+`[]` when absent, so existing `.env` files grant no target access. To authorize an
+actual public target, obtain its owner's permission and set a JSON array of exact
+HTTP/HTTPS origins in `.env`, then recreate the API so it receives the new
+environment (rebuild if source changed). Example syntax only:
+
+```dotenv
+TARGET_ALLOWED_ORIGINS=["https://approved.example.invalid"]
+```
+
+Wildcard/subdomain inheritance is not supported. Adding a private fixture IP to
+the allowlist does not bypass the public-address checks. No private-network test
+exception exists yet; it belongs to US-005.3. Initial checks are implemented as
+reusable code and a test-only route, not a public submission endpoint.
+
 The committed `docker/keycloak/realm.json` defines realm `elasticscan` and public
 client `elasticscan-dev`. Registration is disabled. Development-only password
 grants are enabled for command-line fixture token acquisition. Production clients

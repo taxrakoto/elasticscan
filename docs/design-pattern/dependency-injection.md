@@ -10,6 +10,7 @@ harder to maintain consistently.
 Dependency Injection means a component receives its collaborators instead of
 constructing or locating them itself. Here, FastAPI calls the declared dependency
 functions and supplies their results to `require_team_context`.
+US-005.1 reuses the same pattern for initial-target validation.
 
 ## Components and flow
 
@@ -22,6 +23,11 @@ functions and supplies their results to `require_team_context`.
   raising a uniform HTTP 403. Failed authentication returns HTTP 401 first.
 - Future job handlers declare `Depends(require_team_context)` and use its team
   for persistence access. The production application currently has no job routes.
+- `app/core/target_policy.py`: `require_allowed_submission` receives authorized
+  team context, a typed submission, and the configured `TargetPolicy`. It applies
+  exact-origin and public-address checks before returning the submission to a
+  future route. Tests inject a controlled resolver into the policy and override
+  the policy dependency without bypassing its actual validation rules.
 
 The HTTP boundary is a policy enforcement point: a denied request does not reach
 the protected handler. Fail-closed authorization is a security principle, rather
@@ -40,6 +46,10 @@ calling it directly on client-provided JSON would violate that boundary.
 A route must explicitly declare the dependency. This pattern does not
 automatically protect future endpoints, filter database queries, or enforce
 worker ownership. Those integrations remain later stories.
+Likewise, initial-target checks do not constrain later DNS changes, redirects,
+or crawler traffic. Future submission routes must declare the policy dependency;
+scanner/egress enforcement remains US-005.2. Default deny and defense in depth
+describe security principles used by this policy, not new design patterns.
 
 ## Verification and requirements
 
@@ -49,6 +59,12 @@ selection, dependency overrides, OpenAPI, startup configuration, and denied
 requests not reaching handlers. The opt-in
 `tests/integration/test_keycloak_authentication.py` verifies provider-issued
 memberships for Alice, Alice's peer, and Bob.
+
+`tests/unit/test_target_policy.py` and
+`tests/integration/test_target_policy.py` verify controlled IPv4/IPv6 resolution,
+safe policy denial, typed URL errors, and no DNS for unauthorized callers. See
+[Initial target policy](../target-policy.md) for configuration and scope under
+NFR-006–008 and the initial-validation portion of AC-010/AC-018.
 
 This supports FR-027 and the context-resolution parts of FR-006, FR-028, FR-033,
 and AC-016/AC-017. Complete job isolation is not established by these tests.

@@ -24,6 +24,16 @@ context → acceptance service → one job/dispatch-intent transaction → immut
 errors roll back the transaction and propagate to the caller. It makes no SNS
 or scanner calls. Job routes and team-scoped reads remain pending.
 
+US-005.1 adds `app/core/target_policy.py`. Future submission flow is verified
+identity → authorized team → typed request → initial-target policy → durable
+acceptance. The dependency checks exact scheme/host/port approval, then permits
+only public addresses across all returned IPv4/IPv6 answers. Invalid targets
+are denied before the handler. Startup validates the default-deny configuration
+without DNS. See [Initial target policy](target-policy.md). The acceptance service
+remains a trusted persistence operation; future routes must explicitly use the
+policy dependency before invoking it. Redirect, DNS-change, and crawl-time egress
+enforcement remain US-005.2.
+
 ## Design patterns
 
 The [design-pattern catalog](design-pattern/README.md) records each pattern's

@@ -199,3 +199,39 @@ provider setup with HTTP 500; logs confirmed the known missing session-table
 fault. After recreating development Keycloak from its existing realm import, the
 full suite passed. Python syntax, local documentation links, and Git whitespace
 checks also passed. Test schemas and their job/intent rows were cleaned up.
+
+## US-005.1: initial target policy
+
+`unit/test_target_policy.py` exercises the default-deny exact-origin allowlist,
+scheme/host/port distinctions, case/default-port/terminal-dot normalization,
+invalid configuration, public IP literals, alternate loopback representation,
+restricted IPv4/IPv6 categories, IPv6 mapping/translation, mixed DNS answers,
+resolution failures, and dual-family resolver behavior.
+
+`integration/test_target_policy.py` uses signed JWTs and a test-only `/scan` route
+with the real `require_allowed_submission` dependency. It verifies allowed public
+targets, uniform HTTP 403 without handler execution, no DNS for invalid identity
+or team context, schema HTTP 422, and startup configuration validation without DNS.
+The shared `post_json` helper accepts optional authorization and extra headers;
+existing submission-schema tests retain their behavior.
+
+Run focused checks with no network:
+
+```sh
+docker run --rm --network none --read-only -v "$PWD:/workspace:ro" -w /workspace --entrypoint python elasticscan-api:local -B -m unittest tests.unit.test_target_policy tests.integration.test_target_policy tests.unit.test_submission_schema tests.integration.test_submission_validation -v
+```
+
+Every resolver response is controlled or mocked; public IPs in fixtures are data,
+not contacted systems. The tests create no permanent jobs and launch no scanner.
+This covers initial validation only. Redirect/crawl enforcement and the isolated
+private fixture exception remain US-005.2/US-005.3. See
+[Initial target policy](../docs/target-policy.md) for the security boundary.
+
+On 2026-11-06, all 18 focused target-policy and submission tests passed with
+network access disabled. Full discovery with PostgreSQL and Keycloak enabled
+passed all 59 tests, including the final normalization and transition-address
+cases. The first full run passed all 55 non-Keycloak tests but provider setup
+returned HTTP 500; logs confirmed the existing missing session-table fault.
+Recreating development Keycloak from its realm import restored token issuance
+and the subsequent full suite passed. Changed Python syntax, local documentation
+links, and Git whitespace checks passed. No target was contacted or scanned.

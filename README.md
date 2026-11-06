@@ -15,13 +15,17 @@ resolution from verified membership claims, including explicit selection for
 multi-team callers. US-002.2 adds pending-job insertion using that verified
 context, with immutable ownership enforced by the existing database trigger.
 US-004.2 adds a reusable acceptance service that commits the job and dispatch
-intent together before returning. Scan endpoints, team-scoped retrieval,
-dispatch, and scanner execution remain feature work.
+intent together before returning. US-005.1 adds reusable initial-target validation
+with a default-deny exact-origin allowlist and IPv4/IPv6 checks. Scan endpoints,
+team-scoped retrieval, dispatch, scanner execution, and crawl-time target controls
+remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See
 [Database migrations](docs/database-migrations.md) for applying and evolving the schema,
 and [Authentication](docs/authentication.md) for trust settings and verification.
+See [Initial target policy](docs/target-policy.md) for approved origins, address
+checks, and the limits of initial validation.
 
 ```sh
 python3 scripts/setup_local.py
