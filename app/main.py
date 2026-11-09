@@ -1,4 +1,4 @@
-"""ElasticScan API with authenticated durable scan submission."""
+"""ElasticScan API with durable submission and team-scoped retrieval."""
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -27,7 +27,10 @@ async def lifespan(app):
 app = FastAPI(
     title="ElasticScan",
     version="0.0.1",
-    description="Authenticated durable scan submission; execution is pending.",
+    description=(
+        "Authenticated durable scan submission and team-scoped status retrieval; "
+        "execution is pending."
+    ),
     lifespan=lifespan,
 )
 app.include_router(scans_router)

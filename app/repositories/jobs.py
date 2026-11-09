@@ -1,4 +1,7 @@
 """Job persistence using validated submissions and authorized ownership."""
+from uuid import UUID
+
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.core.team import TeamContext
@@ -26,3 +29,18 @@ def create_pending_job(
     session.add(job)
     session.flush()
     return job
+
+
+def find_team_job(
+    session: Session,
+    *,
+    job_id: UUID,
+    context: TeamContext,
+) -> Job | None:
+    """Read only within a verified team; caller owns the session."""
+    return session.scalar(
+        select(Job).where(
+            Job.job_id == job_id,
+            Job.team_id == context.team_id,
+        )
+    )

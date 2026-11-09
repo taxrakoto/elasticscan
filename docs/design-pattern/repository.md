@@ -8,8 +8,9 @@ verified ownership consistently, without allowing request fields to become
 model arguments that override ownership.
 
 A repository puts application-specific persistence operations behind named
-functions. This implementation uses one small function, not a generic base class
-or a framework. Team-scoped reads and other operations remain later stories.
+functions. This implementation uses focused functions, not a generic base class
+or a framework. US-009.1 adds a focused team-scoped read operation;
+listing and other operations remain later stories.
 
 ## Components and data flow
 
@@ -28,7 +29,15 @@ or a framework. Team-scoped reads and other operations remain later stories.
 The repository returns a `Job` to US-004.2's `accept_scan` service, which associates
 dispatch intent and commits both in one transaction. The repository does not
 commit; the service supplies that boundary and returns an immutable acceptance
-snapshot only after commit. No production submission endpoint exists yet.
+snapshot only after commit. US-003.2 exposes that operation through production
+submission.
+
+US-009.1 adds `find_team_job(session, job_id, context)`. It selects a `Job` with
+both the UUID and verified `context.team_id` in the same SQL query, returning
+`None` when no accessible record exists. It does not load an unfiltered job first
+or limit access to the creator. `GET /scan/{job_id}` owns the read session and
+serializes the returned object before closing it. Unknown and cross-team jobs
+therefore share the same HTTP 404 path. The repository itself has no HTTP logic.
 
 ## Benefits, tradeoffs, and guarantees
 
@@ -43,8 +52,9 @@ SQLAlchemy session and model; it does not claim database independence.
 The repository trusts its internal inputs. `TeamContext` is a
 [Value Object](value-object.md), not cryptographic proof: callers must obtain it
 from verified authorization. The existing [Dependency Injection](dependency-injection.md)
-workflow supplies that context to future routes. Direct initial SQL inserts do not
-verify identity; application callers must use the trusted creation path.
+workflow supplies that context to production submission and retrieval routes.
+Direct initial SQL inserts do not verify identity; application callers must use
+the trusted creation path.
 
 Request rejection, explicit mapping, and database immutability are defense in
 depth, a security principle. The trigger is the database enforcement mechanism.
@@ -64,7 +74,22 @@ ownership rejection at both request levels through schema and HTTP tests.
 US-004.2 extends storage tests to cover the repository as part of atomic
 acceptance, including paired commit, rollback failures, and transaction visibility.
 
-This supports FR-027/FR-028 and AC-017's ownership foundation. Endpoint filtering,
-shared team retrieval, actual worker/maintenance integration, and complete
-cross-team regression remain later tasks. See
+This supports FR-027/FR-028 and AC-017's ownership foundation. US-009.1 adds
+endpoint filtering and shared team status retrieval; actual worker/maintenance
+integration and complete cross-team regression remain later tasks. See
 [Database storage and migrations](../database-migrations.md).
+
+
+`tests/integration/test_job_retrieval.py` verifies production submission followed
+by owning-team and peer retrieval, reciprocal isolation for two teams, identical
+unknown/cross-team 404s, validated multi-team selection, current persisted status,
+and safe read failure. These support FR-006/FR-027/FR-028 and the read portion of
+AC-017. A test fixture writes a running status directly; that does not establish
+a worker transition. Lifecycle serialization remains US-009.2.
+
+Centralizing the query reduces the risk of a route omitting its team predicate,
+but future handlers must still call this restricted operation with verified
+context. This remains an application-level control rather than PostgreSQL
+row-level security. The function is coupled to SQLAlchemy and returns an ORM
+object whose session lifetime the caller must manage. The route explicitly
+limits public response fields; the repository is not a general serializer.

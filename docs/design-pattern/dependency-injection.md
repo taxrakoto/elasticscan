@@ -54,7 +54,8 @@ calling it directly on client-provided JSON would violate that boundary.
 
 A route must explicitly declare the dependency. This pattern does not
 automatically protect future endpoints, filter database queries, or enforce
-worker ownership. Those integrations remain later stories. Direct callers of
+worker ownership. Retrieval explicitly filters through its repository query;
+worker integration remains later work. Direct callers of
 the acceptance service must still supply trusted inputs; injection does not
 enforce that trust outside the HTTP boundary. Application state requires startup
 initialization or an explicit test factory override.
@@ -91,3 +92,21 @@ framework, atomic transactions are a database technique, and default deny is a
 security principle rather than a new design pattern.
 See [Authentication and team context](../authentication.md) and the related
 [Value Object](value-object.md).
+
+
+## Production retrieval composition (US-009.1)
+
+`retrieve_scan` receives verified context and the existing session factory, owns a
+read session, and calls the team-filtered repository query. It does not depend on
+submission target policy: reading a saved job requires team membership, not
+new DNS resolution or current target allowlist approval. `TeamContext` remains
+a reused immutable Value Object; its creator field does not restrict peer reads.
+
+`tests/integration/test_job_retrieval.py` verifies the production GET dependency
+composition: 401/403 and invalid UUID 422 before repository lookup, authorized
+team selection, peer access, unknown/cross-team 404 equivalence, and safe 503.
+Tests replace storage configuration and external key/target responses while
+retaining actual JWT verification and team-context resolution. Query filtering
+is performed by the Repository pattern, not automatically by dependency injection.
+Future endpoints must explicitly declare these dependencies and use restricted
+queries. Full lifecycle/worker isolation remains subsequent work.

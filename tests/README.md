@@ -273,3 +273,40 @@ existing realm import restored token issuance; development sessions, signing
 keys, and unpersisted console changes were reset. Python syntax, local
 documentation links, and whitespace checks passed. The running API image was
 not rebuilt or replaced.
+
+
+## US-009.1: team-scoped status retrieval
+
+`integration/test_job_retrieval.py` adds one offline OpenAPI check and six real
+PostgreSQL tests. Each database test migrates its own disposable schema and
+removes it afterward, restoring dependency overrides. Signed fixture tokens
+exercise real authentication/team rules. The POST-to-GET test uses controlled
+target resolution, and retrieval performs no DNS or target requests.
+
+Checks cover owning-team and teammate access, two-way team isolation, complete
+unknown/cross-team 404 response equivalence, malformed UUID 422 and 401/403 before
+repository lookup, explicit multi-team selection, fresh persisted status, safe
+503 without database detail, and the initial three-field public response. The
+running fixture is written directly in a test; no scanner or worker runs.
+Retrieval creates no jobs or dispatch intents. Lifecycle timestamps/outcomes
+remain US-009.2, and complete polling integration remains US-009.3.
+
+Run focused checks from `elasticscan/` with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_job_retrieval tests.integration.test_scan_acceptance -v
+```
+
+Use the full-suite PostgreSQL/Keycloak command above for regression verification.
+Without the PostgreSQL flag, the six retrieval database tests skip explicitly;
+the OpenAPI check still runs. Mounted source tests do not rebuild or replace the
+running API image, and create no permanent demonstration records.
+
+On 2026-11-09, all 14 focused retrieval/submission checks and the full 73-test
+suite with PostgreSQL and Keycloak enabled passed. The initial full run passed
+all 69 non-Keycloak tests but provider setup returned HTTP 500. Logs confirmed
+the known missing-table fault in Keycloak's development database. Recreating
+only that container from its existing realm import restored token issuance;
+development sessions, signing keys, and unpersisted console changes were reset.
+The subsequent full run passed. Changed Python syntax, local documentation links,
+and whitespace checks passed. The running API image was not rebuilt or replaced.

@@ -23,8 +23,12 @@ only after the job and dispatch intent commit. This status is an acceptance
 snapshot, independent of later worker progress. Persistence errors return a safe
 HTTP 503: durable acceptance could not be confirmed. Connection loss during commit
 can leave its outcome uncertain; automatic retries are not implemented and a
-repeated request can create another job. Team-scoped retrieval, dispatch, scanner
-execution, and crawl-time target controls remain feature work.
+repeated request can create another job. US-009.1 adds authenticated
+`GET /scan/{job_id}` returning `job_id`, `scan_type`, and the current stored
+`status` for the selected authorized team. Any owning-team member can read the
+job. Unknown and cross-team jobs return identical HTTP 404 responses; malformed
+UUIDs return HTTP 422. Full lifecycle details, dispatch, scanner execution, and
+crawl-time target controls remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See

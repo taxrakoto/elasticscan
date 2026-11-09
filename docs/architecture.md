@@ -23,7 +23,7 @@ context → acceptance service → one job/dispatch-intent transaction → immut
 `AcceptedScan` result. The service owns its session and returns only after commit;
 errors roll back the transaction and propagate to the caller. It makes no SNS
 or scanner calls. US-003.2 connects production `POST /scan` to this service;
-team-scoped reads remain pending.
+US-009.1 adds production team-scoped status retrieval.
 
 US-005.1 adds `app/core/target_policy.py`. The production submission flow is verified
 identity → authorized team → typed request → initial-target policy → durable
@@ -95,3 +95,39 @@ Documentation is not evidence that pending behavior is implemented.
 See the [requirements](requirements.md) for the system workflow and acceptance
 criteria, and [local development](local-development.md) for the verified bootstrap
 configuration and startup instructions.
+
+
+## Team-scoped status retrieval (US-009.1)
+
+`GET /scan/{job_id}` in `app/api/routes/scans.py` receives a UUID, verified
+`TeamContext`, and the existing injected session factory. The route owns one
+read session and calls `find_team_job` in `app/repositories/jobs.py`. Its SQL
+query includes both `job_id` and authorized `team_id`, so an inaccessible job is
+never loaded for a later ownership check. The creator is not a read restriction:
+another member of the owning team may read it. Multi-team callers must select
+a verified membership through `X-Team-ID`.
+
+`JobStatusResponse` in `app/schemas/retrieval.py` returns only `job_id`,
+`scan_type`, and current persisted `status`. It is constructed while the session
+is open. Unlike POST acceptance, this is a fresh database read rather than a fixed
+pending snapshot. Internal ownership, target parameters, worker claims, and
+execution metadata are not exposed. Timestamps, findings, scanner errors, and
+cancellation metadata remain US-009.2; real worker outcomes and complete polling
+integration remain subsequent work.
+
+Missing/invalid authentication returns HTTP 401; invalid or ambiguous team context
+returns HTTP 403. Authenticated authorized callers receive HTTP 422 for malformed
+UUIDs, or identical HTTP 404 `Job not found` responses for unknown and cross-team
+jobs. SQLAlchemy read failures return HTTP 503 with
+`Job retrieval is temporarily unavailable`, without database details. Retrieval
+does not mutate jobs, revalidate target policy, resolve target DNS, publish
+messages, or execute scans. Changing the submission allowlist does not prevent
+an authorized team from reading an already saved job.
+
+`tests/integration/test_job_retrieval.py` verifies production POST-to-GET,
+owning-team peer access, two-way team isolation, identical 404 responses, malformed
+UUIDs and unauthorized callers without repository lookup, multi-team selection,
+fresh status reads, safe database failure, and generated OpenAPI. A test-only
+status update creates the running fixture; it is not a worker execution test.
+These cover the retrieval portions of FR-005–007, AC-002/AC-004, and AC-017;
+they do not establish full lifecycle serialization or complete worker isolation.

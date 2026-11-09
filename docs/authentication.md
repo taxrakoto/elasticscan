@@ -3,9 +3,10 @@
 `app/core/auth.py` provides `TokenValidator` and the FastAPI `require_identity`
 dependency. They authenticate JWT access tokens using the existing PyJWT/crypto
 dependency. `app/core/team.py` adds `require_team_context` to resolve authorized
-team membership after authentication. Attaching protection to each job endpoint
-and the final endpoint regression remain US-001.3. US-002.2 consumes verified
-context for job ownership persistence; full job-isolation acceptance remains
+team membership after authentication. Production POST submission and GET retrieval
+use this protection; final coverage of all future job endpoints remains US-001.3.
+US-002.2 consumes verified context for job ownership persistence;
+full job-isolation acceptance remains
 US-002.3. See [Database storage and migrations](database-migrations.md).
 
 ## Trust configuration
@@ -72,9 +73,28 @@ def job_handler(
 ```
 
 The dependency declares HTTP bearer security in that route's OpenAPI definition.
-The production application currently has only a public `/health/live` route;
-tests use separate `/protected` and `/team-protected` routes. No diagnostic
-identity endpoint or scan endpoint is introduced by these stories.
+The production application exposes public `/health/live`, protected `POST /scan`,
+and protected `GET /scan/{job_id}`. Tests also use separate `/protected` and
+`/team-protected` routes. No diagnostic identity endpoint is exposed.
+
+### Job retrieval authorization (US-009.1)
+
+`GET /scan/{job_id}` uses the verified selected team as a database query
+constraint alongside the job UUID. Any member of the owning team can read it,
+including a member who did not submit it. Ownership is not changed on a read.
+Multi-team membership requires an authorized `X-Team-ID` selection.
+
+Missing/invalid bearer authentication returns HTTP 401. Missing, ambiguous, or
+unauthorized team context returns HTTP 403. With valid authentication and context,
+a malformed UUID returns structured HTTP 422. Unknown and cross-team UUIDs return
+the same HTTP 404 body, `{"detail":"Job not found"}`, without revealing whether
+another team owns the ID. A selector outside verified membership returns 403
+before looking up a job; it cannot grant access or reveal job existence.
+
+The response currently contains `job_id`, `scan_type`, and the current persisted
+`status`. Lifecycle timestamps and outcomes remain US-009.2. Database read failure
+returns safe HTTP 503. Reading a saved job does not require its original target
+to remain on the submission allowlist and performs no target DNS lookup.
 
 ## Team membership mapping and selection
 
@@ -137,10 +157,11 @@ Production providers must establish the same administrator-controlled mapping.
 
 Existing JWTs retain their signed membership until expiration. This resolver
 does not perform live membership lookups or immediate revocation. It also does
-not implement roles, administrative cross-team access, or team-scoped queries.
+not implement roles or administrative cross-team access. US-009.1 implements
+team-scoped queries in the job repository.
 The job repository now uses resolved context for ownership on creation; request
 bodies cannot supply ownership. The authorized team must still be used as a query
-constraint; later cross-team job access must return the same HTTP 404 as an
+constraint; cross-team job retrieval returns the same HTTP 404 as an
 unknown job. Denying an unauthorized selector with HTTP 403 does not reveal a
 job's existence.
 
@@ -189,6 +210,11 @@ No credentials or tokens are printed. Tests refuse nondefault provider URLs
 before submitting fixture passwords. Team checks resolve Alice and Alice's peer
 to `team-alpha`, Bob to `team-beta`, and reject cross-team selectors. These tests
 establish team-context authorization, not complete team-scoped job isolation.
+`tests/integration/test_job_retrieval.py` separately verifies production retrieval
+using signed fixtures and real PostgreSQL: owning-team peer reads, two-way team
+isolation, identical unknown/cross-team 404s, 401/403/422 before lookup,
+multi-team selection, fresh persisted status, and safe 503. Full lifecycle and
+worker isolation coverage remain later stories.
 
 If local Keycloak reports healthy but token issuance fails with an internal
 missing-table error, recreate its development-only container:
