@@ -29,6 +29,13 @@ repeated request can create another job. US-009.1 adds authenticated
 job. Unknown and cross-team jobs return identical HTTP 404 responses; malformed
 UUIDs return HTTP 422. Full lifecycle details, dispatch, scanner execution, and
 crawl-time target controls remain feature work.
+US-008.1 adds reusable guarded lifecycle functions: pending-to-running,
+worker-owned running-to-completed/failed, and pending failure for exhausted
+service processing. Conditional PostgreSQL updates protect terminal outcomes
+through these operations. Dispatcher and worker processes remain idle; scanner
+execution, renewable leases/recovery, semantic result validation, safe error
+formatting, and cancellation behavior remain later stories. See
+[Guarded job lifecycle](docs/job-lifecycle.md).
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See

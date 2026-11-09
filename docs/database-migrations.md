@@ -45,8 +45,9 @@ Database checks enforce basic state/outcome consistency, required ownership,
 JSON objects, nonnegative attempt counts, and paired claim/lease fields. The
 trigger rejects changes to accepted identity and parameters even through raw SQL.
 Team-context authorization is implemented in US-002.1 and ownership assignment
-in US-002.2. Team-scoped queries, scanner-specific result validation, guarded
-state transitions, bounded recovery, and cancellation rules remain later stories.
+in US-002.2. US-009.1 implements team-scoped retrieval, and US-008.1 adds guarded
+lifecycle repository operations using the existing schema. Scanner-specific result
+validation, bounded recovery, and cancellation rules remain later stories.
 
 ## Verified immutable ownership
 
@@ -124,8 +125,9 @@ that a confirmed rollback occurred. This service does not blindly retry uncertai
 commits or provide request deduplication. Future HTTP outage handling must
 preserve that distinction.
 
-HTTP acknowledgment belongs to US-003.2 and publication/retry behavior to US-006.
-No submission route, network publication, or scanner is added here. The schema
+HTTP acknowledgment is implemented in US-003.2 and team-scoped status retrieval
+in US-009.1. Publication/retry behavior remains US-006. No network publication or
+scanner execution is implemented by the persistence layer. The schema
 alone does not force arbitrary direct inserts to include intent; application
 acceptance must use this service.
 
@@ -183,3 +185,20 @@ uses a separate connection; it does not infer persistence from the ORM cache.
 
 References: [Alembic tutorial](https://alembic.sqlalchemy.org/en/latest/tutorial.html)
 and [SQLAlchemy PostgreSQL documentation](https://docs.sqlalchemy.org/en/20/dialects/postgresql.html).
+
+
+## Guarded transitions without a schema change (US-008.1)
+
+`app/repositories/lifecycle.py` reuses existing status, worker ID, attempt count,
+outcome, and timestamp columns. Revision `0001` is unchanged. Its consistency
+checks ensure terminal timestamps and the appropriate result/error object, and
+its trigger preserves immutable identity and maintains `updated_at`. The new
+functions add conditional application update predicates; they do not introduce
+a database-wide lifecycle trigger or restrict privileged raw SQL.
+
+The caller owns the transaction and must commit before treating a True result
+as durable. Failure rolls back the whole transition. Timestamps use PostgreSQL
+`statement_timestamp()` and UTC-configured connections. The seven checks in
+`tests/integration/test_job_lifecycle.py` run on migrated disposable schemas,
+including real independent concurrent sessions and fresh-session reloads.
+See [Guarded job lifecycle](job-lifecycle.md) for interfaces and operational limits.

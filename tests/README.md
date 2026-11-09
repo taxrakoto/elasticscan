@@ -310,3 +310,43 @@ only that container from its existing realm import restored token issuance;
 development sessions, signing keys, and unpersisted console changes were reset.
 The subsequent full run passed. Changed Python syntax, local documentation links,
 and whitespace checks passed. The running API image was not rebuilt or replaced.
+
+
+## US-008.1: guarded lifecycle transitions
+
+`integration/test_job_lifecycle.py` adds seven real PostgreSQL checks. Each test
+migrates and removes its own unique schema. Simultaneous operations use separate
+sessions in two threads synchronized before execution; each commits independently.
+
+Checks cover UTC timestamps and ownership preservation, one winning start,
+wrong-worker rejection, competing terminal outcomes, repeated writes preserving
+completed/failed/cancelled rows, a pending-failure/start race, invalid inputs and
+missing jobs, and caller rollback plus database consistency failure. Outcome
+objects and cancelled/running states are fixtures. No scanner, worker loop,
+queue publisher/consumer, or permanent demonstration records are created.
+
+Run focused checks from `elasticscan/` with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_job_lifecycle -v
+```
+
+Use the full-suite PostgreSQL/Keycloak command above for regressions. Without
+`RUN_POSTGRES_TESTS=1`, all seven lifecycle tests skip explicitly. Mounted source
+tests do not rebuild or replace the running API image. See
+[Guarded job lifecycle](../docs/job-lifecycle.md) for caller transaction ownership,
+session refresh requirements, worker identity assumptions, and the limits of
+application guards. Leases/recovery and semantic result/error validation remain
+subsequent stories.
+
+
+On 2026-11-09, all seven focused lifecycle tests passed, and the final full suite
+passed all 80 tests with PostgreSQL and Keycloak enabled, including the final
+pending-failure and cancellation-request guard assertions. The initial full run
+passed all 76 non-Keycloak tests but provider setup returned HTTP 500. Logs
+confirmed the known missing-table fault in Keycloak's development database.
+Recreating only that container from its existing realm import restored token
+issuance; development sessions, signing keys, and unpersisted console changes
+were reset. The subsequent full run passed. Changed Python syntax, local
+documentation links, and whitespace checks passed. No permanent demonstration
+records were created and the running API image was not rebuilt or replaced.

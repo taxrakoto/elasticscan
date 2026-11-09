@@ -93,3 +93,38 @@ context. This remains an application-level control rather than PostgreSQL
 row-level security. The function is coupled to SQLAlchemy and returns an ORM
 object whose session lifetime the caller must manage. The route explicitly
 limits public response fields; the repository is not a general serializer.
+
+
+## Guarded lifecycle writes (US-008.1)
+
+`app/repositories/lifecycle.py` names three internal persistence operations:
+`start_job`, `finish_job`, and `fail_pending_job`. Future worker/service callers
+supply a session, job UUID, and trusted execution inputs. Each function executes
+one conditional PostgreSQL update and returns whether a row changed. The caller
+owns commit/rollback, so these functions can compose with a larger transaction.
+No HTTP execution-update endpoint is exposed.
+
+`start_job` requires pending state and no recorded cancellation request; it
+records a worker, increments attempts once, and writes the start time.
+`finish_job` requires running state and the recorded worker, writing one outcome,
+terminal status, and finish time together. `fail_pending_job` permits an internal
+exhausted-service failure only before running begins. Terminal rows never match
+any of these updates. Database errors propagate without being converted into a
+successful transition. UTC times come from PostgreSQL; the existing trigger
+maintains `updated_at` and protects immutable identity and parameters.
+
+Conditional updates are a concurrency technique supporting the Repository and
+future Idempotent Consumer patterns, not a new design pattern. Centralized
+predicates avoid inconsistent read-then-write checks, but every future execution
+caller must use them. These are trusted internal operations, not authentication
+or database role enforcement. Direct SQL/ORM lifecycle writes remain possible.
+The True/False interface does not distinguish missing jobs from wrong state or
+wrong ownership; a separate read is needed if the caller requires a reason.
+
+SQLAlchemy session synchronization is disabled for these bulk updates. Read
+through a fresh session or explicitly refresh a previously loaded object.
+`tests/integration/test_job_lifecycle.py` verifies competing sessions, terminal
+immutability through the helpers, ownership/UTC preservation, and rollback.
+Semantic result/error validation, renewable leases, recovery, and cancellation
+remain subsequent stories. See [Guarded job lifecycle](../job-lifecycle.md) and
+[Idempotent Consumer](idempotent-consumer.md).

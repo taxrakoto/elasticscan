@@ -1,8 +1,9 @@
 # Idempotent Consumer
 
-**Status:** Proposed worker design. The current worker is an idle bootstrap
-process; durable claims, scanner execution, and duplicate-delivery handling are
-not implemented yet.
+**Status:** US-008.1 implements guarded lifecycle persistence as groundwork.
+The current worker is still an idle bootstrap process. Queue consumption,
+renewable execution leases, recovery, scanner execution, and acknowledgment are
+not implemented yet. This is not a completed idempotent consumer.
 
 ## Problem and application
 
@@ -59,3 +60,31 @@ Verify competing deliveries, redelivery after completion, expired-claim recovery
 stale-owner writes, terminal persistence failure, cancellation, and delayed delivery
 after deletion. Trace these checks to FR-020/FR-021 and AC-006/AC-008, with the
 applicable cancellation/deletion criteria in the [requirements](../requirements.md).
+
+
+## Implemented lifecycle foundation (US-008.1)
+
+`app/repositories/lifecycle.py` provides `start_job`, `finish_job`, and
+`fail_pending_job`. Each uses one conditional update with `RETURNING`: pending
+status permits one start, running plus recorded worker identity permits one
+terminal outcome, and pending status permits one exhausted-service failure.
+Completed, failed, and cancelled rows cannot match these writes. The caller
+owns the session/transaction; a returned True becomes durable only after commit.
+Outcome data, status, and database-clock UTC timestamps change atomically.
+
+Repeated terminal writes preserve the full stored row, including timestamps.
+`tests/integration/test_job_lifecycle.py` checks simultaneous starts, competing
+completion/failure writes, start versus pending failure, wrong-worker writes,
+all terminal states, UTC ownership preservation, and transaction rollback using
+independent PostgreSQL sessions. Outcome and cancelled rows are test fixtures,
+not evidence of scanner output validation or cancellation execution.
+
+These guards are application repository controls, not a database-wide transition
+trigger or proof of exactly-once physical execution. Privileged raw SQL/ORM
+writes can bypass transition predicates. Worker IDs identify the recorded
+execution owner; no running-job reclamation exists here. Before reclamation is
+introduced, US-014 must add per-execution claim-token/lease fencing and renewal.
+Likewise, queue receipt handling, message validation, terminal confirmation before
+acknowledgment, and bounded recovery remain future work. Result-count validation
+and safe failure formatting remain US-008.2/US-008.3. See
+[Guarded job lifecycle](../job-lifecycle.md) for the callable contract and limits.

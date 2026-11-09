@@ -131,3 +131,27 @@ fresh status reads, safe database failure, and generated OpenAPI. A test-only
 status update creates the running fixture; it is not a worker execution test.
 These cover the retrieval portions of FR-005–007, AC-002/AC-004, and AC-017;
 they do not establish full lifecycle serialization or complete worker isolation.
+
+
+## Guarded lifecycle persistence (US-008.1)
+
+Future worker/service code calls `app/repositories/lifecycle.py` inside a
+caller-owned transaction. `start_job` atomically matches pending state and no
+cancellation request, records the execution owner, increments attempts, and
+sets the start time. `finish_job` matches running state plus recorded worker and
+writes completed/result or failed/error with a finish time in the same update.
+`fail_pending_job` supports exhausted dispatch/recovery failure while still
+pending. PostgreSQL evaluates each guard as part of the write; one competing
+transition wins and terminal rows do not match later writes.
+
+All functions return a Boolean changed-row result before caller commit. Database
+exceptions propagate. The existing timestamp/identity trigger remains in force;
+no schema change is required. There is no automatic retry, public execution
+endpoint, running-job reclamation, or background worker integration in this story.
+Existing GET retrieval can read persisted status but still exposes only its
+three-field response. Outcome schemas/validation remain US-008.2/US-008.3 and
+US-009.2. Renewable leases and recovery remain US-014; cancellation remains US-011.
+Application guards do not constrain privileged raw SQL or promise exactly-once
+scanner execution. See [Guarded job lifecycle](job-lifecycle.md),
+[Repository](design-pattern/repository.md), and
+[Idempotent Consumer](design-pattern/idempotent-consumer.md).

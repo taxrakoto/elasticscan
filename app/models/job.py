@@ -1,4 +1,4 @@
-"""Durable job state. Workflow transitions are implemented by later stories."""
+"""Durable job state shared by API and guarded lifecycle operations."""
 from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
