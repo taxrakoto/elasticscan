@@ -25,7 +25,7 @@ Valid input reaches the handler as a typed model. The handler spy records calls
 only; it does not persist jobs or perform scanning.
 
 These tests cover the integration of the Pydantic schema with FastAPI. They do
-not exercise `app.main.app`, which exposes only the bootstrap liveness endpoint.
+not exercise `app.main.app`. US-003.2 adds separate production-route checks below.
 
 ## Run
 
@@ -235,3 +235,41 @@ returned HTTP 500; logs confirmed the existing missing session-table fault.
 Recreating development Keycloak from its realm import restored token issuance
 and the subsequent full suite passed. Changed Python syntax, local documentation
 links, and Git whitespace checks passed. No target was contacted or scanned.
+
+## US-003.2: production asynchronous acceptance
+
+`integration/test_scan_acceptance.py` uses the production `POST /scan` route,
+signed fixture tokens, real authorization and target policy, and PostgreSQL
+schemas migrated and removed separately for each test. Controlled DNS answers
+are fixture data; no target is contacted and no scanner is launched.
+
+Coverage includes the generated OpenAPI response/security schema; HTTP 202 with
+UUID, scan type, and the pending acceptance snapshot; committed job/intent and
+verified ownership; 401/403/422 without unintended records; safe 503 and rollback
+on an injected pre-commit failure; commit-before-response ordering; and persistence
+after replacing the application object and connection pool. Replacement is not a
+full process-restart demonstration. Retrieval UUID/unknown-job tests, dispatch,
+execution, benchmarking, and full documented examples remain later work.
+
+Run focused checks from `elasticscan/` with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_scan_acceptance -v
+```
+
+Use the full-suite PostgreSQL/Keycloak command above for regression verification.
+Without PostgreSQL opt-in, the six database tests skip explicitly; the OpenAPI
+check runs offline. Mounted source tests verify the implementation without
+rebuilding or replacing the running API image. No permanent demonstration jobs
+are created. A connection lost during actual commit can leave the outcome
+uncertain; the rollback test injects failure before commit and does not claim
+otherwise.
+
+On 2026-11-09, all seven focused checks and all 66 tests with PostgreSQL and
+Keycloak enabled passed. The initial full run passed all 62 non-Keycloak tests
+but provider setup returned HTTP 500. Logs showed the known missing-table fault
+in Keycloak's development database. Recreating only that container from the
+existing realm import restored token issuance; development sessions, signing
+keys, and unpersisted console changes were reset. Python syntax, local
+documentation links, and whitespace checks passed. The running API image was
+not rebuilt or replaced.

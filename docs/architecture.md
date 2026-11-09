@@ -22,17 +22,50 @@ US-004.2 adds `app/services/acceptance.py`: validated submission and authorized
 context → acceptance service → one job/dispatch-intent transaction → immutable
 `AcceptedScan` result. The service owns its session and returns only after commit;
 errors roll back the transaction and propagate to the caller. It makes no SNS
-or scanner calls. Job routes and team-scoped reads remain pending.
+or scanner calls. US-003.2 connects production `POST /scan` to this service;
+team-scoped reads remain pending.
 
-US-005.1 adds `app/core/target_policy.py`. Future submission flow is verified
+US-005.1 adds `app/core/target_policy.py`. The production submission flow is verified
 identity → authorized team → typed request → initial-target policy → durable
 acceptance. The dependency checks exact scheme/host/port approval, then permits
 only public addresses across all returned IPv4/IPv6 answers. Invalid targets
 are denied before the handler. Startup validates the default-deny configuration
 without DNS. See [Initial target policy](target-policy.md). The acceptance service
-remains a trusted persistence operation; future routes must explicitly use the
-policy dependency before invoking it. Redirect, DNS-change, and crawl-time egress
+remains a trusted persistence operation; `app/api/routes/scans.py` explicitly uses
+the policy dependency before invoking it. Redirect, DNS-change, and crawl-time egress
 enforcement remain US-005.2.
+
+## Durable HTTP acceptance (US-003.2)
+
+`app/main.py` registers the scan router and creates one database engine and session
+factory after startup configuration validation. Engine creation opens no database
+connection. The lifespan's `finally` block disposes the pool at shutdown.
+`app/api/dependencies.py` supplies the factory from application state; the
+acceptance service owns each individual session and transaction. The synchronous
+route runs through FastAPI's thread pool so database work does not block the
+asynchronous event loop.
+
+The route returns HTTP 202 only after `accept_scan` returns a committed
+`AcceptedScan`. `ScanAcceptance` validates and documents the public UUID,
+`scan_type: "zap"`, and fixed acceptance `status: "pending"`. It is a snapshot,
+not a reread of current worker progress. The handler neither publishes messages
+nor calls a scanner, and waits only for validation and durable persistence.
+
+SQLAlchemy persistence failures return HTTP 503 with the safe detail
+`Durable acceptance could not be confirmed`, without SQL or connection details.
+Pre-commit failures roll back both records. A lost connection during commit may
+leave an uncertain result; a 503 cannot guarantee that no record exists in that
+case. Automatic retry/idempotency is not implemented; repeated submissions may
+create additional jobs.
+
+`tests/integration/test_scan_acceptance.py` exercises the production route with
+signed test identities, controlled DNS, and migrated disposable PostgreSQL
+schemas. It verifies committed acceptance, denial/validation without records,
+rollback and safe errors, commit-before-response ordering, and persistence across
+application/connection-pool replacement. This is not a full API-process restart
+demonstration or a GET retrieval test. Full OpenAPI examples and documented
+fixture-target verification remain US-003.3; process restart acceptance, dispatch,
+and execution remain subsequent work.
 
 ## Design patterns
 

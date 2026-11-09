@@ -16,9 +16,15 @@ multi-team callers. US-002.2 adds pending-job insertion using that verified
 context, with immutable ownership enforced by the existing database trigger.
 US-004.2 adds a reusable acceptance service that commits the job and dispatch
 intent together before returning. US-005.1 adds reusable initial-target validation
-with a default-deny exact-origin allowlist and IPv4/IPv6 checks. Scan endpoints,
-team-scoped retrieval, dispatch, scanner execution, and crawl-time target controls
-remain feature work.
+with a default-deny exact-origin allowlist and IPv4/IPv6 checks. US-003.2 connects
+these components to production `POST /scan`: an authenticated, authorized, valid
+request receives HTTP 202 with `job_id`, `scan_type: "zap"`, and `status: "pending"`
+only after the job and dispatch intent commit. This status is an acceptance
+snapshot, independent of later worker progress. Persistence errors return a safe
+HTTP 503: durable acceptance could not be confirmed. Connection loss during commit
+can leave its outcome uncertain; automatic retries are not implemented and a
+repeated request can create another job. Team-scoped retrieval, dispatch, scanner
+execution, and crawl-time target controls remain feature work.
 
 See [Local development](docs/local-development.md) for credentials, configuration,
 token acquisition, verification, and acceptance boundaries. See

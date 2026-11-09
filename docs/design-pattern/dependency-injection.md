@@ -3,7 +3,7 @@
 ## Status and problem
 
 US-001.1 provides a reusable authentication dependency; US-002.1 composes it with
-team authorization. Future job operations need the same verified identity and
+team authorization. Job operations need the same verified identity and
 membership rules. Repeating these rules inside each handler would make them
 harder to maintain consistently.
 
@@ -11,6 +11,8 @@ Dependency Injection means a component receives its collaborators instead of
 constructing or locating them itself. Here, FastAPI calls the declared dependency
 functions and supplies their results to `require_team_context`.
 US-005.1 reuses the same pattern for initial-target validation.
+US-003.2 composes these dependencies in production submission and injects the
+database session factory.
 
 ## Components and flow
 
@@ -21,13 +23,20 @@ US-005.1 reuses the same pattern for initial-target validation.
   `X-Team-ID` header, then calls `resolve_team_context`.
 - The resolver validates membership and selection, returning a `TeamContext` or
   raising a uniform HTTP 403. Failed authentication returns HTTP 401 first.
-- Future job handlers declare `Depends(require_team_context)` and use its team
-  for persistence access. The production application currently has no job routes.
+- `app/api/routes/scans.py` declares `Depends(require_team_context)` and uses its
+  result for immutable job ownership. FastAPI caches this dependency within the
+  request, sharing the result with the target-policy dependency.
 - `app/core/target_policy.py`: `require_allowed_submission` receives authorized
   team context, a typed submission, and the configured `TargetPolicy`. It applies
   exact-origin and public-address checks before returning the submission to a
-  future route. Tests inject a controlled resolver into the policy and override
+  production submission route. Tests inject a controlled resolver into the policy and override
   the policy dependency without bypassing its actual validation rules.
+- `app/api/dependencies.py` supplies the application-owned session factory from
+  request state. Startup creates its engine/pool; shutdown disposes the pool.
+  The acceptance service opens and closes a session and commits its transaction.
+  The route receives collaborators rather than constructing a pool per request.
+- Tests override the factory to use a migrated disposable PostgreSQL schema,
+  retaining real authorization, target checks, and acceptance persistence.
 
 The HTTP boundary is a policy enforcement point: a denied request does not reach
 the protected handler. Fail-closed authorization is a security principle, rather
@@ -35,7 +44,7 @@ than another design pattern.
 
 ## Benefits, tradeoffs, and limits
 
-The dependency centralizes authorization and exposes it in OpenAPI. Tests can
+The dependencies centralize authorization and expose it in OpenAPI. Tests can
 replace settings or the validator through FastAPI's dependency overrides while
 retaining the real team authorization rules.
 
@@ -45,10 +54,14 @@ calling it directly on client-provided JSON would violate that boundary.
 
 A route must explicitly declare the dependency. This pattern does not
 automatically protect future endpoints, filter database queries, or enforce
-worker ownership. Those integrations remain later stories.
+worker ownership. Those integrations remain later stories. Direct callers of
+the acceptance service must still supply trusted inputs; injection does not
+enforce that trust outside the HTTP boundary. Application state requires startup
+initialization or an explicit test factory override.
 Likewise, initial-target checks do not constrain later DNS changes, redirects,
-or crawler traffic. Future submission routes must declare the policy dependency;
-scanner/egress enforcement remains US-005.2. Default deny and defense in depth
+or crawler traffic. The production submission route declares the policy
+dependency; future submission routes must do so too. Scanner/egress enforcement
+remains US-005.2. Default deny and defense in depth
 describe security principles used by this policy, not new design patterns.
 
 ## Verification and requirements
@@ -68,5 +81,13 @@ NFR-006–008 and the initial-validation portion of AC-010/AC-018.
 
 This supports FR-027 and the context-resolution parts of FR-006, FR-028, FR-033,
 and AC-016/AC-017. Complete job isolation is not established by these tests.
+`tests/integration/test_scan_acceptance.py` additionally verifies production
+HTTP 202 after commit, persisted ownership, denied and malformed input without
+records, safe HTTP 503 with rollback, and replacement application/pool persistence.
+These support the submission portions of AC-001/AC-002, not GET retrieval or a
+full process-restart demonstration. The existing Transactional Outbox, Repository,
+and Value Object patterns are composed without interface changes. FastAPI is a
+framework, atomic transactions are a database technique, and default deny is a
+security principle rather than a new design pattern.
 See [Authentication and team context](../authentication.md) and the related
 [Value Object](value-object.md).
