@@ -7,9 +7,9 @@ The MVP uses OWASP ZAP baseline scanning against authorized, allowlisted public 
 ## Current status
 
 The local bootstrap stack is implemented: API liveness, PostgreSQL, Keycloak with
-two team fixtures, LocalStack SNS/SQS provisioning, and separate idle dispatcher
-and ZAP worker processes. US-004.1 adds SQLAlchemy job/dispatch-intent storage and
-versioned Alembic migrations. US-001.1 adds trusted JWT validation and a reusable
+two team fixtures, LocalStack SNS/SQS provisioning, a first-attempt dispatcher,
+and an idle ZAP worker process. US-004.1 adds SQLAlchemy job/dispatch-intent
+storage and versioned Alembic migrations. US-001.1 adds trusted JWT validation and a reusable
 FastAPI bearer-authentication dependency. US-002.1 adds authorized team-context
 resolution from verified membership claims, including explicit selection for
 multi-team callers. US-002.2 adds pending-job insertion using that verified
@@ -27,12 +27,12 @@ repeated request can create another job. US-009.1 adds authenticated
 `GET /scan/{job_id}` returning `job_id`, `scan_type`, and the current stored
 `status` for the selected authorized team. Any owning-team member can read the
 job. Unknown and cross-team jobs return identical HTTP 404 responses; malformed
-UUIDs return HTTP 422. Full lifecycle details, dispatch, scanner execution, and
+UUIDs return HTTP 422. Full lifecycle details, scanner execution, and
 crawl-time target controls remain feature work.
 US-008.1 adds reusable guarded lifecycle functions: pending-to-running,
 worker-owned running-to-completed/failed, and pending failure for exhausted
 service processing. Conditional PostgreSQL updates protect terminal outcomes
-through these operations. Dispatcher and worker processes remain idle; scanner
+through these operations. The worker process remains idle; scanner
 execution, renewable leases/recovery, semantic result validation, safe error
 formatting, and cancellation behavior remain later stories. See
 [Guarded job lifecycle](docs/job-lifecycle.md).
@@ -165,3 +165,14 @@ pattern documents and their implementation status.
 Follow `implementation_sequence` in `../user-stories.csv` for the recommended solo development order. `US-019.1` provides the bootstrap described in the local development guide; full scan-flow verification belongs to `US-019.2`.
 
 The `depends_on` column lists prerequisite subtask IDs. Independent tasks can run in parallel when their agreed contracts and fixtures are available. Parent stories group related outcomes and do not have their own implementation sequence.
+
+
+## Versioned job publication (US-006.1)
+
+The separate dispatcher container now discovers committed, eligible first-attempt
+jobs and publishes version-one messages to SNS with the matching `scan_type`
+attribute. Short database claims and conditional finalization record publication
+outcomes without holding locks during SNS calls. The worker remains idle.
+Automatic retries and interrupted-attempt recovery remain US-006.3; a failed
+publication retains its durable intent. See [Job publication](docs/job-publication.md)
+and [dispatcher operation](docs/local-development.md#us-0061-dispatcher-process).

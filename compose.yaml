@@ -101,10 +101,11 @@ services:
 
   dispatcher:
     <<: *app
-    command: ["python", "-m", "app.bootstrap", "--role", "dispatcher"]
+    command: ["python", "-m", "app.dispatchers.main"]
+    restart: unless-stopped
     depends_on: *dependencies
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/bootstrap-ready"]
+      test: ["CMD", "test", "-f", "/tmp/dispatcher-ready"]
       interval: 5s
       timeout: 5s
       retries: 10

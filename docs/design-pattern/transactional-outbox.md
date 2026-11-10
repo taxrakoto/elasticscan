@@ -5,9 +5,10 @@
 job/dispatch-intent schema, US-002.2 maps verified ownership during insertion,
 and US-004.2 implements atomic database acceptance with PostgreSQL rollback and
 visibility tests. See the [storage guide](../database-migrations.md).
-The local dispatcher remains an idle placeholder. Public submission, publication,
-retry loops, and worker recovery are not implemented; the flow below describes
-their intended integration.
+US-003.2 implements production HTTP submission. US-006.1 implements versioned
+publication and a separate dispatcher for first attempts. Automatic retries and
+worker recovery remain pending; the complete flow below describes their intended
+integration. See the [publication guide](../job-publication.md).
 
 ### Implemented database acceptance
 
@@ -34,8 +35,9 @@ Five tests in `tests/integration/test_job_storage.py` exercise successful commit
 and fresh-pool reload, a failure after job insertion, an actual dispatch insert
 constraint violation, failure after both inserts before commit, and separate
 connection visibility only after commit. They use the real migration and
-PostgreSQL, with failure injection confined to the tests. Public HTTP 202/503
-behavior and API-restart/SNS-recovery demonstrations remain later stories.
+PostgreSQL, with failure injection confined to the tests. Production HTTP 202/503
+behavior is implemented in US-003.2. Full process-restart
+and automatic SNS-recovery demonstrations remain separate verification.
 
 ### Problem: saving a job and publishing its message
 
@@ -111,7 +113,9 @@ the immutable referenced job:
 | Claim token and lease expiry | Prevent competing dispatchers from owning the same current publication attempt |
 | Safe error code | Diagnose failed publication without storing credentials or sensitive response bodies |
 
-A dispatcher runs continuously as a separate service:
+The complete intended dispatcher/recovery design is below. US-006.1 implements
+first-attempt polling, short claim transactions, token-guarded finalization, and
+shutdown. It does not implement automatic retries or expired-attempt reclamation:
 
 1. Find a bounded batch of unpublished records whose retry time is due and whose
    claim is absent or expired.
@@ -214,3 +218,29 @@ or sensitive scan parameters.
 
 See [Local development](../local-development.md) for the running bootstrap services
 and the distinction between verified configuration and pending feature work.
+
+
+### Implemented first-attempt relay (US-006.1)
+
+The publication operation in `app/dispatchers/publication.py` receives the session
+factory and SNS client from its caller. It reads the existing intent and immutable
+job, validates `JobMessage`, commits a 60-second claim and attempt increment, then
+publishes outside the transaction. Finalization checks the current token before
+writing a UTC success timestamp or safe error code and releasing the claim.
+`app/dispatchers/main.py` discovers up to ten unattempted eligible jobs per pass,
+checks first-attempt eligibility again while claiming, and waits two seconds.
+
+The API's durable acceptance is independent of SNS latency. Benefits are durable
+intent, bounded discovery, concurrent-dispatcher coordination, and safe outcomes.
+Tradeoffs are two database commits per network attempt, lease expiry/uncertain
+acknowledgments, possible duplicates, and no exactly-once guarantee. Failures and
+interrupted attempts remain for future bounded recovery; the current process
+intentionally does not select attempted work. The low-level trusted function can
+attempt eligible records again, but is not an automatic retry policy.
+
+`tests/integration/test_publication.py` covers committed claim visibility,
+competing calls, stale-owner rejection, safe failures, message acknowledgment,
+first-attempt discovery, and actual isolated process-to-queue delivery/shutdown.
+`tests/unit/test_dispatcher.py` covers shutdown and safe database-failure waits.
+The [publication guide](../job-publication.md) describes boundaries. Full AC-007
+recovery and worker execution remain pending, separate from these passing paths.

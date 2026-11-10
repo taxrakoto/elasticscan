@@ -1,13 +1,14 @@
 # Local development (US-019.1)
 
 This is the bootstrap portion of Section 3.2 and AC-022 in the RAD. It provides
-PostgreSQL, a FastAPI liveness endpoint, Keycloak, SNS/SQS emulation, an idle
-dispatcher, and an idle ZAP worker with the pinned scanner runtime. Scan routes,
-the dispatch loop, and scanner adapters remain future work. US-004.1 adds job/dispatch-intent
-tables and Alembic migrations; apply them explicitly as described in the
-[database migration guide](database-migrations.md). The idle
-processes explicitly log their status and do not consume or execute jobs.
-Their health checks indicate process startup only, not readiness to accept scans.
+PostgreSQL, FastAPI, Keycloak, SNS/SQS emulation, a first-attempt dispatcher,
+and an idle ZAP worker with the pinned scanner runtime. Production submission
+and team-scoped retrieval are implemented; scanner adapters remain future work.
+US-004.1 adds job/dispatch-intent tables and Alembic migrations; apply them explicitly as described in the
+[database migration guide](database-migrations.md). The worker explicitly logs
+its idle status and does not execute jobs.
+Dispatcher and worker health checks indicate process startup only. Apply
+migrations before enabling publication; see the dispatcher section below.
 
 ## Start and verify
 
@@ -171,10 +172,10 @@ US-004.1 provides SQLAlchemy models and versioned migrations. Run the commands i
 a healthy PostgreSQL instance alone does not imply the schema exists. US-001.1 provides
 trusted token validation and the `require_identity` dependency using the OIDC
 settings above; see [Authentication](authentication.md) for behavior and tests.
-All future scan operations must require JWT validation and team-scoped authorization. This task exposes only
-a public liveness endpoint, and does not demonstrate API-level team isolation.
-US-006 and US-007 replace the idle dispatcher and worker commands with actual
-entry points while preserving the separate images and configuration. The worker
+Production scan submission and retrieval require JWT validation and team-scoped
+authorization. US-006.1 replaces the idle dispatcher command with automatic
+first-attempt publication; retry/recovery remains US-006.3. US-007 will replace
+the idle worker command with actual execution. The worker
 image already contains `zap-baseline.py`, with CPU and memory limits in Compose.
 No scan execution or private-network target exception is enabled here.
 
@@ -290,3 +291,41 @@ script for local development. Application clients should use configured endpoint
 ARNs, queue URLs, and appropriate AWS IAM credentials; the messaging interface need
 not change merely because the infrastructure provider changes. AWS integration
 verification and filter-policy propagation are separate from local acceptance.
+
+
+## US-006.1: dispatcher process
+
+The API and dispatcher share an image but run as separate containers. The API
+accepts and saves jobs; `python -m app.dispatchers.main` reads committed intents
+and publishes versioned messages to SNS. No public dispatcher port is required.
+The existing environment supplies PostgreSQL settings, `SNS_TOPIC_ARN`,
+`SNS_ENDPOINT_URL`, and AWS credentials/region. LocalStack uses dummy credentials.
+Deploy database migrations before starting the dispatcher.
+
+From `elasticscan/`, with local dependencies healthy and migrations applied:
+
+```sh
+docker compose build api
+docker compose up -d --no-deps dispatcher
+docker compose logs --tail 50 dispatcher
+```
+
+This rebuilds the shared image and replaces/starts the dispatcher, while leaving
+an already running API container in place. Starting it will publish eligible
+unattempted application jobs. Use `docker compose stop dispatcher` to stop it.
+The restart policy is `unless-stopped`. Existing containers do not receive source
+changes until rebuilt/recreated; running tests with a source bind mount does not
+deploy them. Implementation verification uses an isolated subprocess/schema/topic
+and does not activate this process against application jobs.
+
+Polling selects at most ten first attempts per pass and waits two seconds.
+Connection/read timeouts are 3/5 seconds, with one SDK attempt. SIGTERM/SIGINT stop
+new work and let the active call finish. `/tmp/dispatcher-ready` indicates process
+startup/liveness only; it does not report PostgreSQL/SNS readiness or progress.
+Logs include job IDs and publication outcomes without targets or credentials.
+
+Publication failures retain durable intent and a safe error code. Failed,
+invalid, or interrupted attempts are not selected again automatically; retry and
+expired-attempt recovery remain US-006.3. No worker/scanner execution is added.
+See [Job publication](job-publication.md) for the contract, operations, duplicate
+risk, limitations, and [tests](../tests/README.md#us-0061-versioned-publication-and-dispatcher).

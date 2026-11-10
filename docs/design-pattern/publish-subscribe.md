@@ -1,9 +1,9 @@
 # Publish–Subscribe
 
 **Status:** Local SNS/SQS infrastructure is implemented and routing has been
-verified. Application publication and worker consumption remain pending feature
-work. Production AWS behavior and IAM acceptance are not established by local
-emulator tests.
+verified. US-006.1 adds application publication and first-attempt dispatch;
+worker consumption remains pending feature work. Production AWS behavior and
+IAM acceptance are not established by local emulator tests.
 
 ## Problem and application
 
@@ -77,9 +77,27 @@ configuration, distinct from Idempotent Consumer execution guarantees. Benefits
 are repeatable local routing and independent queues; limitations include eventual
 delivery, duplicates, and maintaining consistent attributes and payloads.
 
-Coverage is local FR-016/AC-003 routing, using controlled FR-015 attributes. The
-application publisher, worker, recoverable dispatch loop, and full FR-014/AC-007
-outage recovery remain pending. LocalStack configuration checks are not AWS IAM
+Coverage is local FR-016/AC-003 routing, using controlled FR-015 attributes.
+US-006.1 adds the application publisher and first-attempt polling. The worker,
+automatic retry/recovery loop, and full FR-014/AC-007 outage recovery remain
+pending. LocalStack configuration checks are not AWS IAM
 acceptance. A later Terraform deployment should preserve equivalent routing and
 permissions, with real AWS verification. See the
 [local development guide](../local-development.md#us-0062-dedicated-queue-routing).
+
+
+## Application publisher (US-006.1)
+
+`app/dispatchers/publication.py` now publishes the versioned `JobMessage` body
+and matching String `scan_type` attribute to the operator-supplied SNS topic.
+`app/dispatchers/main.py` calls it from an independent first-attempt polling
+process. Neither component selects a worker instance or executes a scan.
+
+`tests/integration/test_publication.py` starts the real dispatcher entry point
+with isolated PostgreSQL storage and a temporary topic/queue, then checks the
+received raw JSON, persisted acknowledgment, log correlation, and shutdown.
+Existing routing tests continue to exclude unrelated attributes. Benefits are
+independent processes and scanner-specific routing; tradeoffs remain eventual
+and duplicate delivery, subscription maintenance, and separate acknowledgment
+versus execution. See [Job publication](../job-publication.md) for the message
+contract, test fixture, timeouts, and unimplemented retry/worker behavior.

@@ -402,7 +402,46 @@ Full PostgreSQL/Keycloak/LocalStack regression command:
 docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_KEYCLOAK_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
 ```
 
-Application publication, SNS-outage recovery (AC-007), worker consumption, scanner
+These routing-only tests do not verify application publication; US-006.1 below
+adds that check. SNS-outage recovery (AC-007), worker consumption, scanner
 execution, and real AWS integration remain separate checks. See
 [local routing configuration](../docs/local-development.md#us-0062-dedicated-queue-routing)
 and [Publish–Subscribe](../docs/design-pattern/publish-subscribe.md).
+
+
+## US-006.1: versioned publication and dispatcher
+
+`fixtures/contracts/v1/job-message.json` is a shared actual message body, with
+`schema_version`, job UUID, `scan_type=zap`, and validated URL parameters.
+`unit/test_job_message.py` verifies round-trip serialization and invalid input.
+`unit/test_dispatcher.py` verifies discovered-job publication, stop handling, and
+safe waiting on database failure. Offline checks need no network:
+
+```sh
+docker run --rm --network none --read-only --mount "type=bind,src=$PWD,dst=/workspace,readonly" --workdir /workspace --entrypoint python elasticscan-api:local -B -m unittest tests.unit.test_job_message tests.unit.test_dispatcher -v
+```
+
+`integration/test_publication.py` migrates/removes one isolated PostgreSQL schema
+per test. It verifies versioned content, matching SNS attributes, acknowledgment
+and UTC timestamp persistence, unchanged pending job, safe failure/missing-ack
+codes, invalid stored version, committed claims and competitor exclusion,
+stale-owner rejection, missing/suppressed intent exclusion, automatic discovery,
+and no automatic retry after failure. Schema cleanup runs on failures too.
+
+Its LocalStack check provisions and removes unique resources, requires the
+existing default emulator endpoints, and starts the real dispatcher entry point
+in a child process. Only its database engine factory is injected to confine
+queries to the disposable schema. The process automatically publishes the saved
+job, logs its UUID, handles SIGTERM, removes its marker and exits successfully.
+The test compares queue JSON with the shared contract. Application queues and
+jobs are untouched. Without service flags, applicable tests explicitly skip.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_job_message tests.unit.test_dispatcher tests.integration.test_publication tests.integration.test_queue_routing -v
+```
+
+Run the full PostgreSQL/Keycloak/LocalStack suite using the full regression command
+in the US-006.2 section. The new publisher plus existing attribute-filter tests
+cover local FR-015/AC-003 publication/routing. Failure retention contributes to
+FR-014/AC-007; automatic SNS recovery, real AWS IAM, worker consumption and full
+end-to-end execution remain separate work. See [Job publication](../docs/job-publication.md).
