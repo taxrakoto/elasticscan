@@ -42,7 +42,9 @@ token acquisition, verification, and acceptance boundaries. See
 [Database migrations](docs/database-migrations.md) for applying and evolving the schema,
 and [Authentication](docs/authentication.md) for trust settings and verification.
 See [Initial target policy](docs/target-policy.md) for approved origins, address
-checks, and the limits of initial validation.
+checks, and the limits of initial validation. See the
+[Submission contract](docs/submission-contract.md) for request examples, bearer
+authentication, team selection, acceptance responses, and errors.
 
 ```sh
 python3 scripts/setup_local.py

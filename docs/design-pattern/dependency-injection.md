@@ -110,3 +110,24 @@ retaining actual JWT verification and team-context resolution. Query filtering
 is performed by the Repository pattern, not automatically by dependency injection.
 Future endpoints must explicitly declare these dependencies and use restricted
 queries. Full lifecycle/worker isolation remains subsequent work.
+
+
+## Submission contract verification (US-003.3)
+
+The documented-example test in `tests/integration/test_scan_acceptance.py` reads
+the request from generated OpenAPI and calls the production submission route.
+Existing dependency overrides supply an isolated migrated PostgreSQL session
+factory, fixture-token validator configuration, team settings, and a target policy
+with controlled DNS responses. Actual JWT signature verification, membership
+selection, target validation, and atomic acceptance persistence remain active.
+The selected team and verified subject are checked against the stored job.
+
+This reuses Dependency Injection for repeatable contract verification. It does not
+prove live DNS/provider behavior, process restart, or scanner execution. Endpoint
+documentation constants in `app/api/docs/submission.py` and schema examples in
+`app/schemas/submission.py` are ordinary code organization, not new design patterns.
+OpenAPI is a specification and FastAPI is a framework. The existing acceptance
+path continues to compose Transactional Outbox, Repository, and Value Object;
+this story changes documentation and verification without changing their behavior.
+See [Submission contract](../submission-contract.md) for requirements, examples,
+verification instructions, and acceptance boundaries.

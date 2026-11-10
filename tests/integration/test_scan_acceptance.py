@@ -44,6 +44,82 @@ class SubmissionOpenAPITests(unittest.TestCase):
         )
 
 
+    def test_submission_contract_describes_inputs_security_and_errors(self):
+        document = production_app.openapi()
+        operation = document['paths']['/scan']['post']
+        schemas = document['components']['schemas']
+
+        self.assertEqual(operation['security'], [{'BearerAuth': []}])
+        bearer = document['components']['securitySchemes']['BearerAuth']
+        self.assertEqual(bearer['type'], 'http')
+        self.assertEqual(bearer['scheme'], 'bearer')
+
+        request = operation['requestBody']
+        self.assertTrue(request['required'])
+        self.assertEqual(
+            request['content']['application/json']['schema']['$ref'],
+            '#/components/schemas/ZapSubmission',
+        )
+
+        submission = schemas['ZapSubmission']
+        self.assertEqual(
+            set(submission['required']), {'scan_type', 'parameters'},
+        )
+        self.assertFalse(submission['additionalProperties'])
+        self.assertEqual(
+            submission['properties']['scan_type']['const'], 'zap',
+        )
+
+        parameters = schemas['ZapParameters']
+        self.assertEqual(parameters['required'], ['url'])
+        self.assertFalse(parameters['additionalProperties'])
+        self.assertEqual(
+            parameters['properties']['url']['format'], 'uri',
+        )
+
+        header = next(
+            item for item in operation['parameters']
+            if item['name'] == 'X-Team-ID'
+        )
+        self.assertEqual(header['in'], 'header')
+        self.assertFalse(header['required'])
+
+        responses = operation['responses']
+        self.assertEqual(
+            responses['202']['content']['application/json']['schema']['$ref'],
+            '#/components/schemas/ScanAcceptance',
+        )
+        self.assertEqual(
+            schemas['ScanAcceptance']['properties']['status']['const'],
+            'pending',
+        )
+        self.assertEqual(
+            responses['422']['content']['application/json']['schema']['$ref'],
+            '#/components/schemas/HTTPValidationError',
+        )
+        self.assertEqual(
+            set(schemas['ValidationError']['required']),
+            {'loc', 'msg', 'type'},
+        )
+
+        self.assertEqual(
+            responses['401']['headers']['WWW-Authenticate']['schema']['example'],
+            'Bearer',
+        )
+        self.assertEqual(
+            responses['401']['content']['application/json']['example'],
+            {'detail': 'Invalid or missing access token'},
+        )
+        self.assertEqual(
+            set(responses['403']['content']['application/json']['examples']),
+            {'team', 'target'},
+        )
+        self.assertEqual(
+            responses['503']['content']['application/json']['example'],
+            {'detail': 'Durable acceptance could not be confirmed'},
+        )
+
+
 @unittest.skipUnless(
     os.environ.get('RUN_POSTGRES_TESTS') == '1',
     'Set RUN_POSTGRES_TESTS=1 for real PostgreSQL tests',
@@ -157,6 +233,34 @@ class ScanAcceptanceTests(unittest.TestCase):
             self.assertEqual(job.status, 'pending')
             self.assertIsNone(job.started_at)
             self.assertIsNone(intent.published_at)
+
+    def test_documented_example_is_accepted_with_explicit_team_selection(self):
+        schemas = production_app.openapi()['components']['schemas']
+        payload = schemas['ZapSubmission']['examples'][0]
+        claims = self.tokens.claims(team_ids=['team-alpha', 'team-beta'])
+
+        status, body = self.post(
+            payload=payload,
+            authorization='Bearer ' + self.tokens.sign(claims),
+            headers=((b'x-team-id', b'team-alpha'),),
+        )
+
+        self.assertEqual(status, 202)
+        accepted = ScanAcceptance.model_validate_json(body)
+        documented = ScanAcceptance.model_validate(
+            schemas['ScanAcceptance']['examples'][0],
+        )
+        self.assertEqual(accepted.scan_type, documented.scan_type)
+        self.assertEqual(accepted.status, documented.status)
+        self.assertEqual(self.counts(), (1, 1))
+
+        with self.sessions() as session:
+            job = session.get(Job, accepted.job_id)
+            self.assertEqual(job.team_id, 'team-alpha')
+            self.assertEqual(job.created_by, claims['sub'])
+            self.assertEqual(job.parameters, payload['parameters'])
+
+        self.resolver.assert_called_once()
 
     def test_denied_requests_create_no_records(self):
         cases = (

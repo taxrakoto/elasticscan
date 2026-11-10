@@ -350,3 +350,26 @@ issuance; development sessions, signing keys, and unpersisted console changes
 were reset. The subsequent full run passed. Changed Python syntax, local
 documentation links, and whitespace checks passed. No permanent demonstration
 records were created and the running API image was not rebuilt or replaced.
+
+
+## US-003.3: published submission contract
+
+`integration/test_scan_acceptance.py` checks the generated production OpenAPI
+request and response schemas, bearer security, optional team selector, and error
+metadata. A PostgreSQL-backed test reads the documented request example from that
+schema, sends a signed multi-team fixture token with explicit team selection, and
+verifies HTTP 202, the response model, saved ownership, parameters, and atomic
+job/intent creation. DNS and signing-key responses are controlled; real token
+verification, authorization, target policy, and persistence remain active.
+
+Run the focused suite from `elasticscan/` with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_scan_acceptance -v
+```
+
+Use the full PostgreSQL/Keycloak discovery command above for regressions. Without
+`RUN_POSTGRES_TESTS=1`, database tests skip explicitly; OpenAPI checks still run.
+Test schemas are removed afterward. No scanner or permanent demonstration records
+are created; mounted tests do not rebuild or replace the running API image.
+See [Submission contract](../docs/submission-contract.md) for examples and limits.

@@ -7,6 +7,11 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.api.dependencies import get_session_factory
+from app.api.docs.submission import (
+    SUBMISSION_DESCRIPTION,
+    SUBMISSION_RESPONSES,
+    SUBMISSION_SUMMARY,
+)
 from app.core.target_policy import require_allowed_submission
 from app.core.team import TeamContext, require_team_context
 from app.repositories.jobs import find_team_job
@@ -21,13 +26,11 @@ router = APIRouter(tags=['scans'])
 
 @router.post(
     '/scan',
+    summary=SUBMISSION_SUMMARY,
+    description=SUBMISSION_DESCRIPTION,
     status_code=202,
     response_model=ScanAcceptance,
-    responses={
-        401: {'description': 'Missing or invalid bearer authentication'},
-        403: {'description': 'Unauthorized team context or target'},
-        503: {'description': 'Durable acceptance could not be confirmed'},
-    },
+    responses=SUBMISSION_RESPONSES,
 )
 def submit_scan(
     submission: Annotated[
