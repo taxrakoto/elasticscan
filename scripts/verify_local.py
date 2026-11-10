@@ -74,6 +74,7 @@ def verify_messaging():
     subscription = matching[0]
     sub_attrs = sns.get_subscription_attributes(SubscriptionArn=subscription['SubscriptionArn'])['Attributes']
     assert json.loads(sub_attrs['FilterPolicy']) == {'scan_type': ['zap']}
+    assert sub_attrs['FilterPolicyScope'] == 'MessageAttributes'
     assert sub_attrs['RawMessageDelivery'] == 'true'
     marker = str(uuid.uuid4())
     for scan_type in ('zap', 'unrelated'):

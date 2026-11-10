@@ -7,7 +7,7 @@ that a pattern's application behavior has been implemented.
 
 | Pattern | Application | Current status |
 | --- | --- | --- |
-| [Publish–Subscribe](publish-subscribe.md) | SNS subscriptions route scan messages to scanner-specific SQS queues | Local infrastructure implemented and routing verified; application publisher and consumer pending |
+| [Publish–Subscribe](publish-subscribe.md) | SNS subscriptions route scan messages to scanner-specific SQS queues | Local infrastructure implemented; US-006.2 adds isolated routing/configuration and reprovisioning tests; application publisher and consumer pending |
 | [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Atomic acceptance implemented in US-004.2 with PostgreSQL rollback/visibility coverage; publisher/retries pending |
 | [Idempotent Consumer](idempotent-consumer.md) | Handle repeated queue deliveries through durable worker claims and terminal-state protection | Guarded lifecycle persistence groundwork implemented in US-008.1; complete queue consumer, renewable leases, execution, and acknowledgment pending |
 | [Dependency Injection](dependency-injection.md) | FastAPI supplies verified identity, policy, team context, and database factory | Production submission in US-003.2 and team-scoped retrieval in US-009.1; tests inject isolated storage and controlled external responses |

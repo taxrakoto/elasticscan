@@ -373,3 +373,36 @@ Use the full PostgreSQL/Keycloak discovery command above for regressions. Withou
 Test schemas are removed afterward. No scanner or permanent demonstration records
 are created; mounted tests do not rebuild or replace the running API image.
 See [Submission contract](../docs/submission-contract.md) for examples and limits.
+
+
+## US-006.2: isolated SNS/SQS routing
+
+`integration/test_queue_routing.py` adds three opt-in LocalStack checks: queue and
+subscription configuration, restoration of changed subscription attributes without
+duplicates, and actual attribute-based routing with raw body delivery. Unrelated
+and absent routing attributes must not arrive during a 15-second observation
+window. Matching duplicate deliveries are accepted; body/attribute mismatches are
+diagnostic fixtures, not application job contracts.
+
+The runner refuses nondefault SNS/SQS endpoints before creating resources. Each
+test provisions unique topics/queues and registers cleanup, leaving application
+queues untouched. It uses the real local SNS/SQS APIs with dummy credentials, not
+mocked clients. These checks inspect policy configuration but do not establish
+real AWS IAM enforcement. Without `RUN_LOCALSTACK_TESTS=1`, all three skip.
+
+Focused command with LocalStack healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_queue_routing -v
+```
+
+Full PostgreSQL/Keycloak/LocalStack regression command:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_KEYCLOAK_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
+```
+
+Application publication, SNS-outage recovery (AC-007), worker consumption, scanner
+execution, and real AWS integration remain separate checks. See
+[local routing configuration](../docs/local-development.md#us-0062-dedicated-queue-routing)
+and [Publish–Subscribe](../docs/design-pattern/publish-subscribe.md).

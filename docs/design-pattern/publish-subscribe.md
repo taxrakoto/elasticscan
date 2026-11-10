@@ -51,3 +51,35 @@ deliveries at the worker. Neither is implemented merely by provisioning SNS/SQS.
 This pattern supports FR-015–FR-017 and AC-003 in the
 [requirements](../requirements.md). See [local development](../local-development.md)
 for endpoint configuration and local verification boundaries.
+
+
+## Dedicated routing verification (US-006.2)
+
+`docker/localstack/provision.py` receives SNS/SQS clients and optional resource
+names. Default names preserve bootstrap behavior; test-specific names isolate
+verification. It creates the topic, ZAP queue and DLQ, applies the topic-restricted
+queue policy, and sets subscription filter scope, filter policy, and raw delivery.
+Reruns explicitly restore subscription attributes. The returned identifiers let
+tests inspect resources without guessing their URLs or subscription ARN.
+
+`tests/integration/test_queue_routing.py` verifies configuration, repeatable
+provisioning with restoration of changed subscription settings and no duplicate
+subscription, and delivery using a controlled publisher. Attribute/body mismatch
+fixtures establish that routing uses `scan_type` metadata, while exact body
+comparison establishes raw delivery. Unrelated/missing attributes are observed
+for 15 seconds; matching duplicates are permitted. Temporary resources are
+removed; no application queue is consumed. `scripts/verify_local.py` additionally
+checks explicit attribute scope in its existing bootstrap smoke verification.
+
+This reuses Publish–Subscribe; receiving clients from callers is existing
+dependency injection. Idempotent provisioning is ordinary infrastructure
+configuration, distinct from Idempotent Consumer execution guarantees. Benefits
+are repeatable local routing and independent queues; limitations include eventual
+delivery, duplicates, and maintaining consistent attributes and payloads.
+
+Coverage is local FR-016/AC-003 routing, using controlled FR-015 attributes. The
+application publisher, worker, recoverable dispatch loop, and full FR-014/AC-007
+outage recovery remain pending. LocalStack configuration checks are not AWS IAM
+acceptance. A later Terraform deployment should preserve equivalent routing and
+permissions, with real AWS verification. See the
+[local development guide](../local-development.md#us-0062-dedicated-queue-routing).

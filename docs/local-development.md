@@ -239,3 +239,54 @@ ARM64, container Python 3.12.8, and host Python 3.9.6.
 
 US-019.1 is complete at its stated bootstrap scope. This evidence does not close
 full AC-012 or AC-022, nor claim a running scan workflow or API team isolation.
+
+
+## US-006.2: dedicated queue routing
+
+The local provisioning function explicitly configures `FilterPolicyScope` as
+`MessageAttributes`, `FilterPolicy` as `{"scan_type":["zap"]}`, and raw delivery.
+It reapplies subscription attributes when rerun, restoring changed settings
+without creating a second subscription. The queue policy permits SNS SendMessage
+from the configured jobs topic ARN; worker read/delete permissions are separate.
+Raw delivery puts the original publisher body in SQS without an SNS JSON envelope.
+
+After updating the mounted provisioning source, apply it to the running emulator:
+
+```sh
+docker compose exec -T localstack python3 /opt/bootstrap/provision.py
+```
+
+This reapplies the subscription configuration and queue source policy without
+recreating LocalStack or purging its queues. Existing messages are not rewritten.
+The subscription filters the `scan_type` message attribute, not the similarly
+named body field. The future application publisher must send that attribute.
+
+Run isolated routing verification from `elasticscan/`:
+
+```sh
+docker compose run --rm --no-deps -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_queue_routing -v
+```
+
+Tests create uniquely named topics and queues and remove them through registered
+cleanup operations, including on assertion failure. They never consume or purge
+application queues. Checks inspect source policy, subscription and DLQ settings;
+restore deliberately changed subscription attributes; and publish controlled
+messages proving attribute filtering and raw delivery. A missing attribute and an
+unrelated attribute are rejected even when the body says zap. A zap attribute is
+accepted even when the diagnostic body says otherwise; these are routing fixtures,
+not valid application jobs. The nondelivery observation window is 15 seconds.
+Matching duplicates are allowed. Without the flag, tests skip explicitly.
+
+These tests accept only the default container LocalStack endpoints and use dummy
+credentials. They establish local routing configuration, not real AWS IAM
+enforcement, application dispatch, outage recovery, or worker execution. FR-016
+and AC-003 are covered locally; full FR-014/AC-007 dispatcher recovery remains
+future work. See the [test guide](../tests/README.md) and
+[Publish–Subscribe pattern](design-pattern/publish-subscribe.md).
+
+For a later real AWS deployment, Terraform should create equivalent topics,
+queues, subscription attributes, and source policy. Keep the Python provisioning
+script for local development. Application clients should use configured endpoints,
+ARNs, queue URLs, and appropriate AWS IAM credentials; the messaging interface need
+not change merely because the infrastructure provider changes. AWS integration
+verification and filter-policy propagation are separate from local acceptance.
