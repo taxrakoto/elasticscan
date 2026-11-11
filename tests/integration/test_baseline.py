@@ -16,6 +16,7 @@ from pydantic import AnyHttpUrl
 from app.core.target_policy import TargetPolicy
 from app.scanners.base import ScanRequest
 from app.scanners.baseline import ZapBaselineAdapter
+from app.scanners.zap_outcomes import normalize_zap_output
 from app.scanners.scope import fixed_origin_scope
 
 
@@ -128,6 +129,14 @@ class RealBaselineTests(unittest.TestCase):
             host.startswith('outside.example.invalid')
             for host, _ in self.hits
         ))
+        outcome = normalize_zap_output(result)
+        self.assertEqual(outcome.status, 'completed', self.scanner_log)
+        self.assertIsNone(outcome.error_code)
+        self.assertGreater(
+            outcome.counts.high + outcome.counts.medium + outcome.counts.low,
+            0,
+            self.scanner_log,
+        )
 
     def test_real_startup_is_bounded_by_total_timeout(self):
         with self.assertRaises(TimeoutError):

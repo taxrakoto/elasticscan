@@ -679,3 +679,37 @@ scope deviation occurred. The worker image was built but running application
 containers were not replaced, and the private `.env` was unchanged. Comprehensive
 redirect/network enforcement, live consumption/lease renewal, normalized outcomes
 and terminal persistence remain subsequent work.
+
+
+## US-007.3: ZAP outcome interpretation
+
+`unit/test_zap_outcomes.py` tests finding-related exit codes 0/1/2, grouped high/
+medium/low counts, informational exclusion, empty alerts, malformed reports,
+execution evidence, safe timeout/execution/output failures and propagation of
+unexpected programming errors. These checks use no real scanner or database.
+
+```sh
+docker compose run --rm --no-deps -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_zap_outcomes tests.unit.test_baseline tests.unit.test_scanner_scope tests.unit.test_zap_worker -v
+docker compose build zap-worker
+sh scripts/verify_zap_baseline.sh
+```
+
+The real-baseline integration test now also requires actual findings to normalize
+to `completed`. The existing real timeout test checks cleanup; expected exception
+classification is covered separately by unit tests. Reuse the PostgreSQL/
+LocalStack full-discovery command above with Keycloak disabled for regressions.
+Check interpreter imports and the explicit content inventory in the built worker
+image without a source mount. See [ZAP outcomes](../docs/scanner-outcomes.md).
+
+This is reusable interpretation only: no terminal database write, queue polling,
+API result change, periodic lease renewal or new network enforcement is added.
+
+On 2026-11-11, all 23 focused checks passed. PostgreSQL/LocalStack regression
+discovered 149 tests: 143 passed and six skipped (four Keycloak and the two
+real-ZAP tests run separately). Both isolated real-ZAP tests passed, including
+actual findings normalizing to completed and process/temporary-file cleanup on
+timeout. The worker image built and passed imports/content checks without a
+source mount. Syntax for four Python files, shell/Compose configuration, 42 local
+documentation links/anchors, fenced blocks and Git whitespace checks passed.
+Keycloak and running application containers were unchanged. No external target
+was scanned, and no material deviation from the approved proposal occurred.

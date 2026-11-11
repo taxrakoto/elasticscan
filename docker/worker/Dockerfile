@@ -17,7 +17,7 @@ COPY --chown=zap:zap \
 COPY --chown=zap:zap \
     app/scanners/__init__.py app/scanners/base.py \
     app/scanners/scope.py app/scanners/baseline.py \
-    app/scanners/baseline_hooks.py \
+    app/scanners/baseline_hooks.py app/scanners/zap_outcomes.py \
     app/scanners/
 COPY --chown=zap:zap \
     app/core/__init__.py app/core/target_policy.py \

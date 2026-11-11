@@ -28,8 +28,8 @@ completion evidence, active-scan history count and recorded URLs. It is an
 immutable handoff, not a normalized result or durable job completion. Codes 1/2
 can represent findings in the baseline contract; they are preserved, not raised
 as generic execution failures. Missing evidence/report or code 3 must not be
-interpreted as a successful scan. Semantic classification, severity normalization
-and safe failure persistence remain US-007.3/US-008.2/US-008.3. The current
+interpreted as a successful scan. US-007.3 adds separate [ZAP outcome interpretation](scanner-outcomes.md);
+safe terminal persistence remains US-008.2/US-008.3. The current
 `handle_message` discards adapter output and returns only `invoked`.
 
 ## Separate budgets
@@ -113,7 +113,8 @@ This follows the approved single-origin application design from
 during a connection, AWS outbound restrictions and comprehensive redirect tests
 remain pending. The original requirement is not silently marked satisfied.
 US-007.2 verification covers crawling/passive execution and bounded process
-cleanup; full FR-018/AC-018 still needs target-boundary and outcome work.
+cleanup; US-007.3 adds normalized outcomes; full FR-018/AC-018 still needs
+target-boundary enforcement and integration with durable terminal writes.
 CPU/memory/concurrency policy and durable timeout failures remain US-017.1 and
 the outcome/recovery stories. No gateway containers or live queue consumer are
 introduced. This uses [Adapter](design-pattern/adapter.md); deadlines, process

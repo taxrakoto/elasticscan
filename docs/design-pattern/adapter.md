@@ -2,7 +2,7 @@
 
 **Status:** US-007.1 implements a reusable worker handoff boundary and tests it
 with a recording adapter. US-007.2 adds reusable bounded ZAP baseline execution;
-outcome interpretation remains US-007.3.
+US-007.3 adds reusable ZAP outcome interpretation.
 The deployed worker remains an idle bootstrap process.
 
 ## Problem and components
@@ -70,8 +70,8 @@ The small contract separates scanner-specific behavior from validation and
 persistence and allows tests to substitute a recording adapter. It introduces
 an indirection and cannot enforce the behavior of a supplied implementation.
 Baseline mode, separate crawl/total limits and process cleanup are implemented by
-the reusable US-007.2 adapter. Full redirect/crawl enforcement and exit-code
-interpretation remain subsequent acceptance work. Worker
+the reusable US-007.2 adapter. US-007.3 interprets its output separately;
+full redirect/crawl enforcement remains subsequent acceptance work. Worker
 target authorization now reuses the configured policy, but connection-time DNS
 and enforceable outbound network restrictions remain pending.
 
@@ -116,3 +116,19 @@ Process deadlines and cleanup add lifecycle responsibilities; fresh temporary
 homes isolate per-call artifacts but parent-crash recovery remains separate.
 See [ZAP baseline](../zap-baseline.md) for hooks, provisional budgets, raw output,
 isolated actual-scanner checks and the remaining queue/network/recovery boundaries.
+
+## Outcome interpretation (US-007.3)
+
+`app/scanners/zap_outcomes.py:execute_zap_scan` accepts the same injected adapter
+and request, then interprets raw output through `normalize_zap_output`. It returns
+the shared `ScanOutcome` and `SeverityCounts` value objects. Finding-related exits
+0/1/2 may complete only with valid report and execution evidence; runtime errors
+produce safe classified failures. Unexpected programming errors propagate.
+
+The adapter remains responsible for process execution and cleanup. Interpretation
+is an ordinary function, not another design pattern. This separation keeps ZAP
+report/exit conventions out of shared result types and allows another tool to
+have its own interpreter. The extra boundary requires tests with real ZAP reports,
+not only mocked adapters. Neither the wrapper nor the current worker handler
+persists outcomes. See [ZAP outcome rules](../scanner-outcomes.md) and
+[Value Object](value-object.md) for contracts, tradeoffs and verification.

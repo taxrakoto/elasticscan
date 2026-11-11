@@ -1,6 +1,6 @@
 """Scanner handoff contract; concrete ZAP execution is separate."""
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Literal, Protocol
 from uuid import UUID
 
 
@@ -19,6 +19,24 @@ class ScannerOutput:
     passive_complete: bool
     active_scan_count: int | None
     visited_urls: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class SeverityCounts:
+    high: int = 0
+    medium: int = 0
+    low: int = 0
+
+
+@dataclass(frozen=True)
+class ScanOutcome:
+    counts: SeverityCounts | None
+    error_code: str | None = None
+    error_message: str | None = None
+
+    @property
+    def status(self) -> Literal['completed', 'failed']:
+        return 'completed' if self.counts is not None else 'failed'
 
 
 class ScannerAdapter(Protocol):

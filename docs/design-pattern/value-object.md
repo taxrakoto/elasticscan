@@ -47,6 +47,15 @@ queries and actual worker processing remain subsequent work.
 
 ## Verification and requirements
 
+US-007.3 adds frozen `SeverityCounts` and `ScanOutcome` in `app/scanners/base.py`.
+The ZAP interpreter returns either counts or fixed error information; status is
+derived from the presence of counts. These objects carry no database connection
+or raw report. Future tool-specific interpreters can return the same contract.
+Immutability and named fields make results easy to pass and compare, but do not
+validate arbitrary direct construction or prove a durable job transition.
+`tests/unit/test_zap_outcomes.py` verifies the interpreter produces consistent
+success/failure values and counts. See [ZAP outcomes](../scanner-outcomes.md).
+
 `tests/unit/test_team_context.py` checks field values, value equality, and blocked
 field reassignment. Signed HTTP tests and opt-in Keycloak tests verify that the
 dependency returns the correct team and caller. US-002.2's PostgreSQL tests in
