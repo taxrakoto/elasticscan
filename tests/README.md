@@ -581,3 +581,45 @@ to distinguish current time from transaction-start time, and ownership/input
 assertions were strengthened. No material scope deviation occurred. No scanner ran
 or application image/container was rebuilt or replaced. Periodic renewal,
 queue visibility/acknowledgment and bounded recovery remain subsequent work.
+
+
+## US-005.2: single-origin application phase
+
+Deployment configuration now accepts zero or one exact origin. More than one
+entry is a configuration error, while an empty list remains default deny. The
+existing target-policy tests cover that configuration restriction.
+
+Seven unit tests in `unit/test_scanner_scope.py` cover normalized origin/path
+matching, out-of-origin redirect/link candidates, IPv4/IPv6 literals, current
+private/mixed resolution rejection, empty/multiple configuration, context setup
+and setup errors. They use recording ZAP clients; no real redirect or crawl is
+performed. Three additional PostgreSQL worker tests verify changed origin,
+private DNS answers and empty policy never claim or mutate the saved job or
+invoke its adapter. The existing worker success test checks scope metadata is
+forwarded after the claim commits. DNS responses are controlled test data.
+
+Focused command from `elasticscan/` with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_scanner_scope tests.unit.test_target_policy tests.unit.test_zap_worker tests.integration.test_zap_worker tests.integration.test_target_policy -v
+```
+
+Use the US-006.3 PostgreSQL/LocalStack full-discovery command for regression checks
+with Keycloak disabled. Tests create and remove disposable schemas, contact no
+target and do not deploy running application containers. Real ZAP/API runtime
+verification and redirect/link crawling remain US-007.2; connection-time DNS and
+enforceable AWS outbound restrictions remain deployment work. US-005.2 stays open
+because its original NFR-007/AC-010/AC-018 requirements are not fully verified.
+See [Single fixed scanner origin](../docs/scanner-scope.md) for the callable
+contract, configuration, reused patterns and limits.
+
+On 2026-11-11, all 30 focused checks passed. Full PostgreSQL/LocalStack discovery
+passed 128 tests and explicitly skipped four Keycloak tests (132 discovered);
+Keycloak remained unchanged. Syntax checks passed for seven affected Python files,
+44 local documentation links/anchors and fenced blocks passed, and Git whitespace
+checks passed. Worker test schemas were confirmed removed. No target was contacted
+or real scanner started, and no application image/container was rebuilt or
+replaced. The private `.env` was unchanged. The final diff matched the approved
+single-origin application phase, with no material deviation. Real ZAP redirect/
+crawl/runtime verification and enforceable network restrictions remain pending;
+the backlog status and successful session history were not changed by these checks.

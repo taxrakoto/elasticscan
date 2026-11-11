@@ -131,3 +131,20 @@ path continues to compose Transactional Outbox, Repository, and Value Object;
 this story changes documentation and verification without changing their behavior.
 See [Submission contract](../submission-contract.md) for requirements, examples,
 verification instructions, and acceptance boundaries.
+
+## Single-origin worker policy (US-005.2 application phase)
+
+`handle_message` accepts an optional `TargetPolicy`. Normal callers load the
+current deployment configuration; PostgreSQL worker tests supply an exact origin
+with controlled DNS. The policy is checked after stored-job/message agreement and
+before claiming. A denial neither changes job state nor invokes the adapter.
+The optional argument is trusted internal injection, not a client-controlled
+override. Deployment loading permits zero or one configured origin.
+
+`configure_scope` accepts an injected ZAP client and the immutable scanner request.
+Recording clients test the context contract and errors without starting a scanner.
+The adapter still must use the configured context when crawling. This keeps tests
+repeatable, but does not verify real ZAP redirect behavior or provide network
+isolation. See [Single fixed scanner origin](../scanner-scope.md). The Adapter and
+Dependency Injection patterns are reused; exact-origin checks and regex matching
+are ordinary validation techniques, not additional patterns.

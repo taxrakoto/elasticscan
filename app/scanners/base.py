@@ -9,6 +9,7 @@ class ScanRequest:
     job_id: UUID
     url: str
     claim_token: UUID
+    scope_regex: str
 
 
 class ScannerAdapter(Protocol):

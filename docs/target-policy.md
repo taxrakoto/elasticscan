@@ -1,24 +1,31 @@
 # Initial target policy (US-005.1)
 
 This policy checks whether the initial scan URL is an explicitly authorized
-public destination. The reusable dependency is implemented and exercised through
-a test-only HTTP route; production submission remains US-003.2. It does not open
+public destination. The dependency is used by production submission since
+US-003.2 and by the reusable worker handoff in the US-005.2 application phase.
+It does not open
 an HTTP connection to the target, follow redirects, or launch a scanner.
 
 ## Operator configuration
 
-`TARGET_ALLOWED_ORIGINS` is a JSON array of exact HTTP/HTTPS origins. An origin
-is a scheme, host, and port. The default is `[]`, so missing configuration grants
+`TARGET_ALLOWED_ORIGINS` is a JSON array containing zero or one exact HTTP/HTTPS
+origin. An origin is a scheme, host, and port. The default is `[]`, so missing configuration grants
 no target access. Example syntax only:
 
 ```dotenv
-TARGET_ALLOWED_ORIGINS=["https://approved.example.invalid","http://approved.example.invalid:8080"]
+TARGET_ALLOWED_ORIGINS=["https://approved.example.invalid"]
 ```
 
 The example is not permission to scan a real target. Operators must obtain target
 owner authorization before adding an actual origin. The allowlist is global to
 the deployment; it is not a per-team target ownership registry. Any authenticated,
 authorized team caller can use an approved origin.
+
+More than one array entry is rejected as an operator configuration error. Existing
+multi-origin environments must select one origin before application startup.
+All paths within it are allowed; there is no prefix setting. See
+[Single fixed scanner origin](scanner-scope.md) for the worker recheck, reusable
+ZAP context setup and remaining real-crawl/network-enforcement requirements.
 
 Entries may have an optional root slash, but no non-root path, query, fragment,
 or credentials. Wildcards and suffix matching are not supported. Subdomains,
@@ -79,7 +86,7 @@ Adding a private address to the allowlist never overrides address restrictions.
 No private-network exception is added here; an isolated fixture exception belongs
 to US-005.3.
 
-## Authentication, errors, and future route integration
+## Authentication, errors, and route integration
 
 `require_allowed_submission` first depends on `require_team_context`, preserving
 JWT and team authorization, then validates the typed request's initial target.
@@ -97,8 +104,8 @@ Content-Type: application/json
 The policy error includes neither URLs, query strings, credentials, DNS answers,
 nor resolver diagnostics. No target details are logged by this code.
 
-A future production route must explicitly use the dependency before calling
-durable acceptance:
+Production `POST /scan` uses the dependency before calling durable acceptance.
+The following reduced example illustrates the dependency annotation:
 
 ```python
 from typing import Annotated
@@ -115,21 +122,23 @@ def submit_scan(
         Depends(require_allowed_submission),
     ],
 ):
-    # The future handler may now proceed to durable acceptance.
+    # The authorized handler may now proceed to durable acceptance.
     ...
 ```
 
-This is documentation, not a production endpoint. `accept_scan` remains a trusted
-internal persistence service and does not itself apply target policy. Future
-submission wiring must validate the target before invoking it.
+This example is documentation, not another endpoint. `accept_scan` remains a
+trusted internal persistence service and does not itself apply target policy.
+Any new submission caller must validate the target before invoking it.
 
 ## Limits and patterns
 
 Initial DNS validation is not connection pinning. A hostname can change between
 validation and worker execution, and an approved site can redirect to or discover
 another destination. Redirect/crawl scope and enforceable scanner/egress controls
-remain US-005.2; this task does not claim complete SSRF protection or scanner
-acceptance under AC-010/AC-018.
+remain incomplete after US-005.2's single-origin application phase. Reusable scope
+setup and a worker DNS recheck now exist, but real crawl verification and AWS
+outbound enforcement are pending; this code does not claim complete SSRF protection
+or scanner acceptance under AC-010/AC-018.
 
 [Dependency Injection](design-pattern/dependency-injection.md) supplies the policy
 to FastAPI and a controlled resolver to tests. Default deny and defense in depth

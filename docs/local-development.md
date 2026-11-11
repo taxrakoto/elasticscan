@@ -108,8 +108,8 @@ If changing the local region, change the ARN and queue URL in `.env` consistentl
 For the separate initial scan-target configuration, see
 [Initial target policy](target-policy.md). `TARGET_ALLOWED_ORIGINS` defaults to
 `[]` when absent, so existing `.env` files grant no target access. To authorize an
-actual public target, obtain its owner's permission and set a JSON array of exact
-HTTP/HTTPS origins in `.env`, then recreate the API so it receives the new
+actual public target, obtain its owner's permission and set a JSON array containing
+one exact HTTP/HTTPS origin in `.env`, then recreate the API so it receives the new
 environment (rebuild if source changed). Example syntax only:
 
 ```dotenv
@@ -118,8 +118,13 @@ TARGET_ALLOWED_ORIGINS=["https://approved.example.invalid"]
 
 Wildcard/subdomain inheritance is not supported. Adding a private fixture IP to
 the allowlist does not bypass the public-address checks. No private-network test
-exception exists yet; it belongs to US-005.3. Initial checks are implemented as
-reusable code and a test-only route, not a public submission endpoint.
+exception exists yet; it belongs to US-005.3. Production submission uses the
+initial checks since US-003.2. The US-005.2 application phase also rechecks the
+target in the reusable worker handoff and generates an exact-origin ZAP scope.
+Multiple configured origins are now rejected; all paths in the single origin
+remain allowed. Worker callers must receive the same updated environment.
+Real ZAP crawling and AWS network enforcement remain pending. See
+[Single fixed scanner origin](scanner-scope.md) for configuration and limits.
 
 The committed `docker/keycloak/realm.json` defines realm `elasticscan` and public
 client `elasticscan-dev`. Registration is disabled. Development-only password

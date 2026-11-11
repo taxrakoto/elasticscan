@@ -13,6 +13,7 @@ from alembic import command
 from alembic.config import Config
 from sqlalchemy import create_engine, event
 
+from app.core.target_policy import TargetPolicy
 from app.db.session import database_url, make_engine, make_session_factory
 from app.models import Job
 from app.workers.zap import handle_message
@@ -51,6 +52,10 @@ class ZapWorkerTests(unittest.TestCase):
         self.payload = json.loads(FIXTURE.read_text())
         self.job_id = UUID(self.payload['job_id'])
         self.adapter = Mock()
+        self.policy = TargetPolicy(
+            ['https://approved.example.invalid'],
+            resolver=Mock(return_value=('8.8.8.8',)),
+        )
 
     def drop_schema(self):
         with self.admin.begin() as connection:
@@ -82,6 +87,7 @@ class ZapWorkerTests(unittest.TestCase):
             sessions=self.sessions,
             worker_id=worker_id,
             adapter=self.adapter,
+            policy=self.policy,
         )
 
     def test_adapter_sees_committed_start_and_preserved_ownership(self):
@@ -94,6 +100,8 @@ class ZapWorkerTests(unittest.TestCase):
             self.assertEqual(stored['worker_id'], 'worker-a')
             self.assertEqual(stored['attempt_count'], 1)
             self.assertIsNotNone(stored['started_at'])
+            self.assertIsInstance(request.scope_regex, str)
+            self.assertTrue(request.scope_regex)
             self.assertEqual(request.claim_token, stored['claim_token'])
             self.assertIsInstance(request.claim_token, UUID)
             self.assertIsNotNone(stored['heartbeat_at'])
@@ -110,6 +118,34 @@ class ZapWorkerTests(unittest.TestCase):
         self.adapter.run.side_effect = inspect_request
         self.assertEqual(self.handle(), 'invoked')
         self.adapter.run.assert_called_once()
+
+    def test_worker_rejects_target_when_current_origin_changes(self):
+        self.save_job()
+        before = self.snapshot()
+        self.policy = TargetPolicy(
+            ['https://replacement.example.invalid'],
+            resolver=Mock(),
+        )
+        self.assertEqual(self.handle(), 'target_denied')
+        self.assertEqual(self.snapshot(), before)
+        self.adapter.run.assert_not_called()
+        self.policy.resolver.assert_not_called()
+
+    def test_worker_rejects_private_resolution_without_claiming(self):
+        self.save_job()
+        before = self.snapshot()
+        self.policy.resolver.return_value = ('127.0.0.1',)
+        self.assertEqual(self.handle(), 'target_denied')
+        self.assertEqual(self.snapshot(), before)
+        self.adapter.run.assert_not_called()
+
+    def test_empty_configuration_denies_worker_target(self):
+        self.save_job()
+        before = self.snapshot()
+        self.policy = TargetPolicy([])
+        self.assertEqual(self.handle(), 'target_denied')
+        self.assertEqual(self.snapshot(), before)
+        self.adapter.run.assert_not_called()
 
     def test_missing_and_inconsistent_jobs_never_invoke_adapter(self):
         self.assertEqual(self.handle(), 'missing_job')

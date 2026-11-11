@@ -159,6 +159,10 @@ def get_target_policy() -> TargetPolicy:
 
     if not isinstance(values, list):
         raise ValueError('TARGET_ALLOWED_ORIGINS must be a JSON array')
+    if len(values) > 1:
+        raise ValueError(
+            'TARGET_ALLOWED_ORIGINS accepts at most one origin'
+        )
     return TargetPolicy(values)
 
 

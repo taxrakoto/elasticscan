@@ -100,6 +100,8 @@ class TargetPolicyTests(unittest.TestCase):
             )
 
         invalid = (
+            '["https://first.example.invalid",'
+            '"https://second.example.invalid"]',
             '', '*', '{}', '"https://approved.example.invalid"', '[null]',
             '["https://*.example.invalid"]',
             '["https://approved.example.invalid/path"]',

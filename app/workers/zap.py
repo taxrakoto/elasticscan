@@ -2,12 +2,15 @@
 import json
 from typing import Literal
 
+from fastapi import HTTPException
 from pydantic import ValidationError
 from sqlalchemy.orm import sessionmaker
 
+from app.core.target_policy import TargetPolicy, get_target_policy
 from app.models import Job
 from app.repositories.lifecycle import claim_job
 from app.scanners.base import ScannerAdapter, ScanRequest
+from app.scanners.scope import fixed_origin_scope
 from app.schemas.job_message import JobMessage
 
 
@@ -15,6 +18,7 @@ WorkerDecision = Literal[
     'invalid_message',
     'missing_job',
     'inconsistent_message',
+    'target_denied',
     'not_started',
     'invoked',
 ]
@@ -27,6 +31,7 @@ def handle_message(
     worker_id: str,
     adapter: ScannerAdapter,
     lease_seconds: int = 60,
+    policy: TargetPolicy | None = None,
 ) -> WorkerDecision:
     """No queue acknowledgment or terminal outcome persistence is performed."""
     try:
@@ -51,6 +56,18 @@ def handle_message(
         ):
             return 'inconsistent_message'
 
+        execution_policy = policy if policy is not None else get_target_policy()
+        if not execution_policy.allowed_origins:
+            return 'target_denied'
+        try:
+            scope_regex = fixed_origin_scope(
+                message.parameters.url, execution_policy,
+            )
+        except HTTPException as exc:
+            if exc.status_code != 403:
+                raise
+            return 'target_denied'
+
         token = claim_job(
             session,
             job_id=job.job_id,
@@ -63,6 +80,7 @@ def handle_message(
             job_id=job.job_id,
             url=str(message.parameters.url),
             claim_token=token,
+            scope_regex=scope_regex,
         )
 
     # Transaction exit must succeed before external scanner work begins.
