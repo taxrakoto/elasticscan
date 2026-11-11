@@ -1,8 +1,9 @@
 # ZAP outcome interpretation (US-007.3)
 
 This reusable code distinguishes findings from failed execution. It does not
-persist terminal jobs or change the deployed idle worker. US-008.2 and US-008.3
-will connect normalized outcomes to guarded database writes.
+persist terminal jobs or change the deployed idle worker. US-008.2 adds a separate
+[successful completion function](result-summaries.md) for counts; safe failed
+outcome persistence remains US-008.3. Live worker orchestration remains pending.
 
 ## Calling and shared contract
 
@@ -75,7 +76,8 @@ new interpreter alongside required modules; no whole-application copy is added.
 
 This supports FR-017/FR-018, NFR-008/NFR-018 and the outcome portion of AC-018.
 The callable worker handler still discards raw adapter output. There is no live
-SQS consumer, periodic lease renewal, terminal persistence or changed API result.
+SQS consumer, periodic lease renewal or changed API result. Successful terminal
+persistence is available separately through US-008.2, without live worker wiring.
 Full AC-018 target enforcement remains subject to the outstanding US-005.2 AWS
 network/redirect work. See [baseline execution](zap-baseline.md),
 [Adapter](design-pattern/adapter.md) and [Value Object](design-pattern/value-object.md).

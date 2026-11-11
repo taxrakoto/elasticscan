@@ -20,6 +20,7 @@ propagate. The functions neither authenticate callers nor commit transactions.
 | `claim_job(session, *, job_id, worker_id, lease_seconds=60)` | Pending, no cancellation request or claim metadata | Running, worker/token, incremented attempt, start/heartbeat/expiry |
 | `renew_job(session, *, job_id, worker_id, claim_token, lease_seconds=60)` | Running, same worker/token and strictly unexpired | Heartbeat and nonshortening expiry |
 | `finish_job(session, *, job_id, worker_id, status, result=None, error=None, claim_token=None)` | Running, owned by supplied worker; leased jobs require current unexpired token | Completed/result or failed/error, unused outcome null, finish time, clears active token/expiry |
+| `complete_job(session, *, job_id, worker_id, claim_token, counts)` | Running, current worker/token and strictly unexpired lease; validated `SeverityCounts` | Completed/result, error null, finish time, clears active token/expiry |
 | `fail_pending_job(session, *, job_id, error)` | Pending | Failed status, error object, result null, finish time |
 
 Worker IDs must be nonempty strings without surrounding whitespace and must
@@ -29,10 +30,13 @@ dictionary and no error, or failed with an error dictionary and no result.
 service callers that have established exhausted dispatch/recovery policy.
 These functions do not decide when attempts are exhausted.
 
-The dictionary checks establish object shape only. Nonnegative severity counts,
-scanner result normalization, stable error codes, safe messages, and removal of
-secrets remain US-008.2/US-008.3. Do not pass arbitrary exception details as
-production errors. Cancellation transitions and scanner termination remain US-011;
+The legacy dictionary checks establish object shape only. US-008.2 adds
+`complete_job` for strict nonnegative integer counts from `SeverityCounts`,
+including required claim ownership. It reuses the same atomic update and caller
+transaction. US-007.3 supplies ZAP normalization; safe failed-outcome persistence
+remains US-008.3. See [Atomic result summaries](result-summaries.md). Do not pass
+arbitrary exception details as production errors. Cancellation transitions and
+scanner termination remain US-011;
 the cancellation-request start guard is not a completed cancellation feature.
 
 ## Transaction ownership

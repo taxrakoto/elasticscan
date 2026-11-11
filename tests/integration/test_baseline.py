@@ -1,5 +1,7 @@
 """Actual ZAP baseline scans against a container-local public-address fixture."""
 from contextlib import contextmanager
+from dataclasses import asdict
+import json
 import os
 from pathlib import Path
 import tempfile
@@ -136,6 +138,10 @@ class RealBaselineTests(unittest.TestCase):
             outcome.counts.high + outcome.counts.medium + outcome.counts.low,
             0,
             self.scanner_log,
+        )
+        print(
+            'ZAP_RESULT_SUMMARY=' + json.dumps(asdict(outcome.counts)),
+            flush=True,
         )
 
     def test_real_startup_is_bounded_by_total_timeout(self):

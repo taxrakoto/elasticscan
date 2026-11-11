@@ -13,7 +13,7 @@ that a pattern's application behavior has been implemented.
 | [Adapter](adapter.md) | Separate scanner-specific execution from worker validation and database claims | US-007.1 handoff, US-005.2 context setup and US-007.2 reusable bounded baseline execution; US-007.3 reusable ZAP outcome interpretation; live queue wiring and full target-boundary acceptance pending |
 | [Dependency Injection](dependency-injection.md) | FastAPI and internal callers supply verified context, policy, storage and scanner clients | Submission/retrieval implemented; US-005.2 application phase injects worker policy and scanner context client for isolated checks |
 | [Value Object](value-object.md) | Immutable authorized context and acceptance snapshot | `TeamContext` implemented in US-002.1/US-002.2; `AcceptedScan` added in US-004.2; shared `SeverityCounts`/`ScanOutcome` added in US-007.3 |
-| [Repository](repository.md) | Insert jobs with verified ownership and read with authorized team filtering | Creation in US-002.2, atomic acceptance in US-004.2, team-scoped retrieval in US-009.1, guarded lifecycle writes in US-008.1 and execution leases in US-014.1; listing and other operations pending |
+| [Repository](repository.md) | Insert jobs with verified ownership and read with authorized team filtering | Creation in US-002.2, atomic acceptance in US-004.2, team-scoped retrieval in US-009.1, guarded lifecycle writes in US-008.1 and execution leases in US-014.1 and strict successful completion in US-008.2; listing and other operations pending |
 
 ## Maintaining the catalog
 

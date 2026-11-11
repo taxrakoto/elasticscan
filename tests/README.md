@@ -713,3 +713,44 @@ source mount. Syntax for four Python files, shell/Compose configuration, 42 loca
 documentation links/anchors, fenced blocks and Git whitespace checks passed.
 Keycloak and running application containers were unchanged. No external target
 was scanned, and no material deviation from the approved proposal occurred.
+
+
+## US-008.2: atomic result summaries
+
+`integration/test_result_summaries.py` uses disposable migrated PostgreSQL schemas.
+It verifies zero/nonzero normalized findings, strict count/token validation,
+identity and UTC timestamps, rollback after a real database statement failure,
+visibility before commit, team-scoped retrieval after replacing application
+connection resources, stale/expired/wrong ownership, duplicates and competition.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_result_summaries tests.integration.test_job_lifecycle tests.integration.test_execution_leases tests.integration.test_job_retrieval -v
+docker compose build zap-worker
+python3 -B scripts/verify_result_summaries.py
+```
+
+Without PostgreSQL opt-in the new database tests skip. The actual-adapter summary
+test also skips unless the verification helper supplies `REAL_ZAP_RESULT_JSON`.
+That helper first runs the two actual scanner tests in the existing network-none
+fixture, then passes only validated normalized counts to the PostgreSQL tests in
+a separate container. This proves persistence of actual adapter output without
+giving the scanner access to the database or an external target. Scanner reports
+are not exported. A fresh pool/session factory simulates application resource
+replacement; PostgreSQL is not restarted.
+
+Use the existing PostgreSQL/LocalStack regression command with Keycloak disabled.
+Check built worker imports without a source mount. No new dependency, migration,
+whole-app Docker copy, queue consumption, automatic lease renewal or HTTP result
+serialization is introduced. See [Atomic result summaries](../docs/result-summaries.md).
+
+On 2026-11-11, focused discovery passed 27 tests with the actual-summary test
+explicitly skipped until the helper run (28 discovered). The two-stage helper
+then passed both isolated real-ZAP tests and all six result-summary tests,
+including persistence and retrieval of actual normalized scanner counts. Full
+PostgreSQL/LocalStack regression passed 148 tests with seven expected skips
+(four Keycloak, two separately run real-ZAP tests and the separately run actual-
+summary test; 155 discovered). The worker image built and passed completion
+imports/content checks without a source mount. Syntax for four Python files,
+shell/Compose configuration, 42 documentation links/anchors, fenced blocks and
+Git whitespace checks passed. Keycloak and running application containers were
+unchanged. No external target was scanned or material scope deviation introduced.

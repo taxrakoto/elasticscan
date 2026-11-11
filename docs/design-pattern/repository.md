@@ -147,3 +147,20 @@ Eight disposable-schema integration tests verify competition, renewal, expiry,
 rollback, token fencing and current-clock checks. See
 [Execution claims and leases](../execution-leases.md) for examples, configuration,
 the provisional default, stale ORM-state cautions and remaining recovery work.
+
+## Validated successful completion (US-008.2)
+
+`app/repositories/lifecycle.py:complete_job` consumes the shared `SeverityCounts`
+value object, checks nonnegative integers and a UUID token, then delegates to
+`finish_job`. This centralizes the intended success-write boundary without
+duplicating lease, owner or timestamp rules. It atomically writes the result and
+completed state while the caller retains transaction ownership. Validation is
+an ordinary boundary technique; no new design pattern is introduced.
+
+The benefit is a tool-independent normalized persistence contract. The tradeoff
+is that trusted callers must choose this stricter operation: legacy `finish_job`
+and direct SQL retain their earlier validation. No global SQL severity constraint
+or live worker orchestration is added. Disposable-schema tests verify rollback,
+visibility, replacement application connections, team-filtered retrieval, expiry
+and competing writers; a two-stage helper also verifies actual isolated ZAP
+counts. See [Atomic result summaries](../result-summaries.md).

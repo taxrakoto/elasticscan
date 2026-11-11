@@ -1,4 +1,5 @@
 """Guarded job transitions; callers own transaction commit and rollback."""
+from dataclasses import asdict
 from datetime import timedelta
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -7,6 +8,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Job
+from app.scanners.base import SeverityCounts
 
 
 def _validate_worker(worker_id: str) -> None:
@@ -202,6 +204,33 @@ def finish_job(
         .execution_options(synchronize_session=False)
     )
     return session.scalar(statement) is not None
+
+
+def complete_job(
+    session: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    claim_token: UUID,
+    counts: SeverityCounts,
+) -> bool:
+    """Save validated counts and completion; caller owns commit/rollback."""
+    if not isinstance(claim_token, UUID):
+        raise ValueError('claim_token must be a UUID')
+    if not isinstance(counts, SeverityCounts):
+        raise ValueError('counts must be SeverityCounts')
+    result = asdict(counts)
+    if any(type(value) is not int or value < 0 for value in result.values()):
+        raise ValueError('Severity counts must be nonnegative integers')
+    return finish_job(
+        session,
+        job_id=job_id,
+        worker_id=worker_id,
+        claim_token=claim_token,
+        status='completed',
+        result=result,
+        error=None,
+    )
 
 
 def fail_pending_job(
