@@ -1,8 +1,9 @@
 # Guarded job lifecycle (US-008.1)
 
-These reusable repository operations protect saved job transitions. The current
-dispatcher and worker are idle bootstrap processes: no live queue delivery or
-scanner execution is integrated here. Real execution acceptance under AC-004 and
+These reusable repository operations protect saved job transitions. The dispatcher
+publishes versioned messages with bounded recovery; the deployed worker remains
+an idle bootstrap process. No scanner execution is integrated here.
+Real execution acceptance under AC-004 and
 AC-005 remains dependent on subsequent scanner/worker stories.
 
 ## Callable contract
@@ -45,9 +46,12 @@ with sessions.begin() as session:
 # True becomes durable only after successful transaction exit/commit.
 ```
 
-Future workers must not launch a scanner until the successful start transaction
-commits. Terminal outcome persistence must also commit before queue acknowledgment.
-Those caller integrations are not implemented here. A later failure in the same
+Workers must not launch a scanner until the successful start transaction
+commits. US-007.1's reusable `app/workers/zap.py:handle_message` validates the
+message against the saved job and commits the guarded start before calling its
+injected adapter. Its tests use a recording adapter; real ZAP execution is pending.
+Terminal outcome persistence must also commit before queue acknowledgment;
+those integrations are not implemented here. A later failure in the same
 transaction rolls back status, outcome, attempts, and timestamps together.
 An exception during commit can leave the outcome uncertain; do not infer a
 confirmed rollback from every connection error or blindly retry uncertain work.
@@ -99,7 +103,7 @@ this non-reclaiming foundation, but are not a per-attempt fencing token. Before
 reclaiming jobs, US-014 must add claim tokens, renewable leases, stale-owner
 rejection, and bounded recovery. No heartbeat/lease fields are changed here.
 This does not promise exactly-once physical scanner execution across crashes.
-Queue validation, visibility renewal, message acknowledgment, cancellation,
+Queue polling, visibility renewal, message acknowledgment, cancellation,
 deletion coordination, and actual scanner execution remain subsequent work.
 
 ## Verification

@@ -506,3 +506,38 @@ was corrected to close SDK clients explicitly after an initial context-manager
 compatibility error; its final check passed. No application image/container was
 rebuilt or replaced, and no scan ran. There were no material implementation
 changes from the validated preview.
+
+
+## US-007.1: worker validation and adapter handoff
+
+`unit/test_zap_worker.py` rejects malformed JSON, unsupported/noninteger versions,
+missing fields, invalid UUIDs/scan types/URLs and unknown fields before storage
+or adapter access. `integration/test_zap_worker.py` adds six PostgreSQL tests
+using isolated migrated schemas and the shared version-one message fixture.
+
+Coverage includes missing/inconsistent jobs without mutation, complete parameter
+matching, committed running state visible in an independent session before adapter
+invocation, ownership preservation, terminal/cancellation exclusion, competing
+deliveries and redelivery, precommit rollback with no invocation, and propagated
+adapter exceptions leaving running state. A recording adapter replaces ZAP;
+no target is contacted, queue consumed or permanent job created.
+
+Focused command from `elasticscan/` with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_zap_worker tests.integration.test_zap_worker tests.unit.test_job_message tests.integration.test_job_lifecycle -v
+```
+
+Use the US-006.3 PostgreSQL/LocalStack regression command above for full discovery
+with Keycloak tests explicitly disabled. Without PostgreSQL opt-in, database
+tests skip. Source-mounted tests do not rebuild or replace application containers.
+See [Adapter](../docs/design-pattern/adapter.md) for the callable contract,
+decisions and later execution/queue/recovery acceptance boundaries.
+
+On 2026-11-11, all 16 focused checks passed. Full PostgreSQL/LocalStack discovery
+passed 110 tests with four Keycloak tests explicitly skipped (114 discovered);
+Keycloak remained unchanged. Syntax checks passed for all four new Python files,
+27 local documentation links/anchors and fenced blocks passed, and Git whitespace
+checks passed. Worker test schemas were confirmed removed. The final diff matched
+the approved scope. No real scanner ran or application image/container was rebuilt
+or replaced. Full AC-018 execution acceptance remains subsequent work.

@@ -1,7 +1,8 @@
 # Idempotent Consumer
 
 **Status:** US-008.1 implements guarded lifecycle persistence as groundwork.
-The current worker is still an idle bootstrap process. Queue consumption,
+US-007.1 adds reusable message validation and a committed adapter handoff.
+The deployed worker is still an idle bootstrap process. Queue consumption,
 renewable execution leases, recovery, scanner execution, and acknowledgment are
 not implemented yet. This is not a completed idempotent consumer.
 
@@ -84,7 +85,22 @@ trigger or proof of exactly-once physical execution. Privileged raw SQL/ORM
 writes can bypass transition predicates. Worker IDs identify the recorded
 execution owner; no running-job reclamation exists here. Before reclamation is
 introduced, US-014 must add per-execution claim-token/lease fencing and renewal.
-Likewise, queue receipt handling, message validation, terminal confirmation before
+Likewise, queue receipt handling, terminal confirmation before
 acknowledgment, and bounded recovery remain future work. Result-count validation
 and safe failure formatting remain US-008.2/US-008.3. See
 [Guarded job lifecycle](../job-lifecycle.md) for the callable contract and limits.
+
+## Validated handoff (US-007.1)
+
+`app/workers/zap.py:handle_message` validates the shared message version/schema,
+checks it against the saved job, then commits `start_job` before invoking the
+injected scanner adapter. Concurrent deliveries and redelivery cannot invoke the
+adapter twice through this non-reclaiming handler. Missing or inconsistent jobs
+are preserved without invocation; pending cancellation requests block starts.
+Tests confirm terminal-state preservation and precommit failure exclusion.
+
+This remains a consumer foundation: no queue polling, receipt acknowledgment,
+terminal writes, renewable leases or concrete ZAP execution is wired in. An
+adapter exception after commit leaves running state and propagates; no automatic
+recovery or completion is inferred. See [Adapter](adapter.md) for decisions,
+component interactions, tests and remaining acceptance boundaries.
