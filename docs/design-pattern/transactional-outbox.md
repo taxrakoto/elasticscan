@@ -6,9 +6,9 @@ job/dispatch-intent schema, US-002.2 maps verified ownership during insertion,
 and US-004.2 implements atomic database acceptance with PostgreSQL rollback and
 visibility tests. See the [storage guide](../database-migrations.md).
 US-003.2 implements production HTTP submission. US-006.1 implements versioned
-publication and a separate dispatcher for first attempts. Automatic retries and
-worker recovery remain pending; the complete flow below describes their intended
-integration. See the [publication guide](../job-publication.md).
+publication and a separate dispatcher. US-006.3 adds bounded publication retry,
+jittered backoff and expired-claim recovery. Worker recovery remains pending;
+the complete flow below includes its intended integration. See the [publication guide](../job-publication.md).
 
 ### Implemented database acceptance
 
@@ -36,8 +36,9 @@ and fresh-pool reload, a failure after job insertion, an actual dispatch insert
 constraint violation, failure after both inserts before commit, and separate
 connection visibility only after commit. They use the real migration and
 PostgreSQL, with failure injection confined to the tests. Production HTTP 202/503
-behavior is implemented in US-003.2. Full process-restart
-and automatic SNS-recovery demonstrations remain separate verification.
+behavior is implemented in US-003.2. US-006.3 verifies dispatcher process restart
+and SNS access restoration using the same durable job. API process-crash and
+worker recovery demonstrations remain separate verification.
 
 ### Problem: saving a job and publishing its message
 
@@ -113,9 +114,9 @@ the immutable referenced job:
 | Claim token and lease expiry | Prevent competing dispatchers from owning the same current publication attempt |
 | Safe error code | Diagnose failed publication without storing credentials or sensitive response bodies |
 
-The complete intended dispatcher/recovery design is below. US-006.1 implements
-first-attempt polling, short claim transactions, token-guarded finalization, and
-shutdown. It does not implement automatic retries or expired-attempt reclamation:
+The publication portion below is implemented by US-006.1/US-006.3, including
+short claim transactions, token-guarded finalization, shutdown, bounded retries
+and expired-attempt reclamation within the remaining budget:
 
 1. Find a bounded batch of unpublished records whose retry time is due and whose
    claim is absent or expired.
@@ -133,11 +134,11 @@ shutdown. It does not implement automatic retries or expired-attempt reclamation
 7. Wait briefly when no work is due. On shutdown, stop claiming new work; unfinished
    claims remain recoverable after their leases expire.
 
-Retry delays should use capped exponential backoff with jitter to avoid many
-records retrying simultaneously during an outage. Delays such as 5 seconds,
-15 seconds, and 1 minute are illustrative only. Poll intervals, batch sizes,
-timeouts, lease durations, retry limits, and escalation thresholds remain
-implementation defaults requiring review.
+Retry delays use capped exponential backoff with jitter to spread retries.
+The accepted implementation defaults are five total attempts, retry ranges of
+1–2, 2–4, 4–8 and 8–16 seconds, a 60-second lease, two-second polling and ten-record
+batches. The delay function caps at 30 seconds. These code defaults are not a
+production availability commitment. Network/polling latency adds to the delays.
 
 An SNS outage leaves durable dispatch intent available for later recovery. A
 record that repeatedly fails must remain visible for operator action; reaching
@@ -209,38 +210,51 @@ Its principal acceptance checks are AC-001, AC-006, AC-007, and AC-008 in the
 [RAD](../requirements.md#10-acceptance-criteria-and-traceability).
 
 Transaction rollback and paired commit visibility are covered in US-004.2.
-Remaining integration tests must exercise an API crash after commit, SNS failure
-followed by recovery, competing dispatchers, expired claims,
-an acknowledgment lost after successful publication, and duplicate worker
-deliveries. Publication failures, oldest unpublished-record age, retry counts,
-and expired claims must be observable without logging bearer tokens, credentials,
-or sensitive scan parameters.
+US-006.3 tests SNS access failure/restoration across isolated dispatcher processes,
+retry timing/budget, expired claims, invalid messages, and finalization failure
+after mocked SNS success. Existing publication tests cover competing calls and
+stale token rejection. API crash after commit, duplicate worker delivery and
+complete worker recovery remain separate checks. Safe logs and a read-only
+inspection query expose attempt counts, due/expired leases and invalid/exhausted
+states. Comprehensive metrics and external alerting remain future operational
+work; parameters, credentials and bearer tokens are not logged.
 
 See [Local development](../local-development.md) for the running bootstrap services
 and the distinction between verified configuration and pending feature work.
 
 
-### Implemented first-attempt relay (US-006.1)
+### Implemented relay and bounded recovery (US-006.1 and US-006.3)
 
-The publication operation in `app/dispatchers/publication.py` receives the session
-factory and SNS client from its caller. It reads the existing intent and immutable
-job, validates `JobMessage`, commits a 60-second claim and attempt increment, then
-publishes outside the transaction. Finalization checks the current token before
-writing a UTC success timestamp or safe error code and releasing the claim.
-`app/dispatchers/main.py` discovers up to ten unattempted eligible jobs per pass,
-checks first-attempt eligibility again while claiming, and waits two seconds.
+`app/dispatchers/publication.py` receives the session factory and SNS client.
+`dispatch_conditions()` is shared by discovery and atomic claiming. It excludes
+published/suppressed intent, nonpending/cancel-requested jobs, active claims,
+future due times, invalid payloads and consumed five-attempt budgets. The first
+transaction validates `JobMessage`, increments the attempt count and commits a
+random token, lease and crash-recovery time before network publication.
+The second transaction finalizes only the current token; a handled failure
+releases it and schedules jittered backoff. A crash leaves the original claim
+recoverable after lease expiry plus saved delay, within the remaining budget.
+`app/dispatchers/main.py` discovers at most ten due intents and waits two seconds.
 
-The API's durable acceptance is independent of SNS latency. Benefits are durable
-intent, bounded discovery, concurrent-dispatcher coordination, and safe outcomes.
-Tradeoffs are two database commits per network attempt, lease expiry/uncertain
-acknowledgments, possible duplicates, and no exactly-once guarantee. Failures and
-interrupted attempts remain for future bounded recovery; the current process
-intentionally does not select attempted work. The low-level trusted function can
-attempt eligible records again, but is not an automatic retry policy.
+The API's durable acceptance stays independent of SNS latency. Benefits are
+preserved intent, bounded network pressure, database-coordinated ownership and
+restart recovery. Tradeoffs are two database commits per network attempt,
+possible duplicates after uncertain acknowledgment/finalization, finite recovery
+coverage and operator responsibility after exhaustion. No job/intent is deleted
+or scan marked failed when publication exhausts. A final crashed claim consumes
+its attempt too: the counter and expired lease expose exhaustion even if no
+process survives to write a final error/log. Restart does not reset the budget.
+The inspection query and recovery boundaries are in the
+[publication guide](../job-publication.md).
 
-`tests/integration/test_publication.py` covers committed claim visibility,
-competing calls, stale-owner rejection, safe failures, message acknowledgment,
-first-attempt discovery, and actual isolated process-to-queue delivery/shutdown.
-`tests/unit/test_dispatcher.py` covers shutdown and safe database-failure waits.
-The [publication guide](../job-publication.md) describes boundaries. Full AC-007
-recovery and worker execution remain pending, separate from these passing paths.
+`tests/integration/test_publication.py` covers committed claims, competing calls,
+stale owners, saved failure/recovery, due-time and budget guards, expired claims,
+invalid exclusion and identical republication after finalization failure. Its
+LocalStack test starts a real dispatcher with an unreachable local SNS endpoint,
+stops it after the saved failure, then restarts against real LocalStack and
+verifies the same job's versioned message in an isolated ZAP queue. This does
+not interrupt the shared emulator or establish real AWS IAM behavior.
+`tests/unit/test_dispatcher.py` checks retry bounds, shutdown and safe database
+failure waits. Worker execution, reconciliation and queue-consumer idempotency
+remain future work. Backoff, leases and conditional writes support the outbox
+pattern; they are not separate patterns introduced by this story.

@@ -1,5 +1,6 @@
 """Dispatcher discovery, shutdown, and database-failure handling."""
 import unittest
+from datetime import timedelta
 from threading import Event
 from unittest.mock import MagicMock, Mock, patch
 from uuid import uuid4
@@ -7,6 +8,7 @@ from uuid import uuid4
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.dispatchers.main import run, run_pass
+from app.dispatchers.publication import retry_delay
 
 
 class DispatcherTests(unittest.TestCase):
@@ -18,7 +20,7 @@ class DispatcherTests(unittest.TestCase):
         session.scalars.return_value = job_ids
         return sessions
 
-    def test_pass_publishes_discovered_jobs_as_first_attempts(self):
+    def test_pass_publishes_discovered_due_jobs(self):
         ids = [uuid4(), uuid4()]
         sessions = self.sessions_with_jobs(ids)
         sns = Mock()
@@ -35,7 +37,6 @@ class DispatcherTests(unittest.TestCase):
                 'job_id': job_id,
                 'sns': sns,
                 'topic_arn': 'fixture-topic',
-                'first_attempt_only': True,
             })
 
     def test_shutdown_stops_before_the_next_publication(self):
@@ -76,3 +77,27 @@ class DispatcherTests(unittest.TestCase):
         stopped.wait.assert_called_once_with(2)
         self.assertIn('dispatcher_database_unavailable', logs.output[0])
         self.assertNotIn('fixture failure', logs.output[0])
+
+    def test_retry_delay_has_exponential_bounds_and_a_cap(self):
+        for count, ceiling in (
+            (1, 2), (2, 4), (3, 8),
+            (4, 16), (5, 30), (10000, 30),
+        ):
+            for use_upper in (False, True):
+                with self.subTest(count=count, upper=use_upper):
+                    def choose(lower, upper):
+                        return upper if use_upper else lower
+
+                    with patch(
+                        'app.dispatchers.publication.uniform',
+                        side_effect=choose,
+                    ) as random_delay:
+                        actual = retry_delay(count)
+
+                    random_delay.assert_called_once_with(
+                        ceiling / 2, ceiling,
+                    )
+                    expected = ceiling if use_upper else ceiling / 2
+                    self.assertEqual(
+                        actual, timedelta(seconds=expected),
+                    )

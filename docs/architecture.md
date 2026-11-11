@@ -7,8 +7,8 @@ scanner-specific SQS queues; workers execute scans and persist their outcomes.
 The current implementation is a local bootstrap: the API exposes liveness and
 OpenAPI, PostgreSQL and messaging infrastructure are provisioned, and Keycloak
 provides development identities for two teams. The worker remains an idle
-placeholder; US-006.1 adds first-attempt dispatch. Job/dispatch storage and Alembic
-migrations are implemented in US-004.1; see [Database migrations](database-migrations.md).
+placeholder; US-006.1 adds publication and US-006.3 adds bounded dispatch recovery.
+Job/dispatch storage and Alembic migrations are implemented in US-004.1; see [Database migrations](database-migrations.md).
 US-001.1 implements trusted JWT validation and a reusable FastAPI authentication
 dependency. US-002.1 adds a team-context dependency: bearer token → verified
 claims → authorized `TeamContext` → future job handler. It validates configured
@@ -87,8 +87,9 @@ verification requirements.
   ownership mapping, leaving transaction orchestration to the caller.
 
 The outbox's atomic database acceptance is implemented and covered by PostgreSQL
-rollback and visibility tests. US-006.1 implements first-attempt publication;
-automatic retry and the idempotent consumer remain proposed feature behavior. Publish–subscribe
+rollback and visibility tests. US-006.1 implements publication and US-006.3 adds
+bounded publication retries and expired-claim recovery. The complete idempotent
+consumer remains proposed feature behavior. Publish–subscribe
 infrastructure and application publication are implemented locally; worker
 consumption remains pending.
 Documentation is not evidence that pending behavior is implemented.
@@ -158,7 +159,7 @@ scanner execution. See [Guarded job lifecycle](job-lifecycle.md),
 [Idempotent Consumer](design-pattern/idempotent-consumer.md).
 
 
-## Versioned publication and first-attempt dispatcher (US-006.1)
+## Versioned publication and recovery (US-006.1 and US-006.3)
 
 `app/schemas/job_message.py` defines the shared version-one contract. The
 `app/dispatchers/publication.py` operation claims committed intent in a short
@@ -168,9 +169,16 @@ using the claim token. It never changes job status. A 60-second lease bounds
 ownership; lost acknowledgments/final commits can still lead to duplicates.
 
 `app/dispatchers/main.py` runs independently of HTTP requests using the same image.
-Every two seconds it discovers up to ten eligible jobs and attempts each once.
-The claim repeats the first-attempt guard to handle stale discovery safely.
-It stops taking work on SIGTERM/SIGINT, closes resources, and removes its liveness
-marker. Failed/invalid/interrupted attempts remain visible; no automatic retry or
-recovery scheduler is implemented. See [Job publication](job-publication.md) for
-inputs, outcomes, safe logs, limitations, and tests. Full AC-007 remains US-006.3.
+Every two seconds it discovers up to ten due intents, ordered by scheduled time.
+Discovery and atomic claiming share eligibility guards: fewer than five attempts,
+no active reservation, no invalid-message error, pending uncancelled job, and
+unpublished/unsuppressed due intent. Handled failures schedule jittered exponential
+backoff; interrupted attempts recover after lease expiry plus saved backoff.
+A restart preserves the budget. Five consumed attempts stop automatic publication
+without deleting the job or intent; a final crashed attempt is observable from
+its counter and expired lease even without a final log. Invalid payloads also
+require operator action. It stops taking work on SIGTERM/SIGINT, closes resources,
+and removes its liveness marker. See [Job publication](job-publication.md) for
+inputs, safe logs, inspection SQL, duplicate risks and AC-007 verification.
+The access-recovery test restarts an isolated dispatcher against LocalStack;
+worker execution, real AWS and complete end-to-end recovery remain separate.

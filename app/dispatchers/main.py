@@ -1,4 +1,4 @@
-"""Run first-attempt publication independently of the HTTP API."""
+"""Run bounded publication recovery independently of the HTTP API."""
 import logging
 import os
 import signal
@@ -7,11 +7,11 @@ from threading import Event
 
 import boto3
 from botocore.config import Config
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from app.db.session import make_engine, make_session_factory
-from app.dispatchers.publication import publish_job
+from app.dispatchers.publication import dispatch_conditions, publish_job
 from app.models import DispatchIntent, Job
 
 
@@ -20,23 +20,19 @@ READY_FILE = Path('/tmp/dispatcher-ready')
 
 
 def run_pass(sessions, *, sns, topic_arn, stopped):
-    """Discover at most ten first attempts, then publish outside the read."""
+    """Discover at most ten due attempts, then publish outside the read."""
     if stopped.is_set():
         return []
     with sessions() as session:
         job_ids = list(session.scalars(
             select(DispatchIntent.job_id)
             .join(Job, Job.job_id == DispatchIntent.job_id)
-            .where(
-                DispatchIntent.attempt_count == 0,
-                DispatchIntent.published_at.is_(None),
-                DispatchIntent.suppressed_at.is_(None),
-                DispatchIntent.claim_token.is_(None),
-                DispatchIntent.next_attempt_at <= func.clock_timestamp(),
-                Job.status == 'pending',
-                Job.cancellation_requested_at.is_(None),
+            .where(*dispatch_conditions())
+            .order_by(
+                DispatchIntent.next_attempt_at,
+                DispatchIntent.created_at,
+                DispatchIntent.id,
             )
-            .order_by(DispatchIntent.created_at, DispatchIntent.id)
             .limit(10)
         ))
 
@@ -49,7 +45,6 @@ def run_pass(sessions, *, sns, topic_arn, stopped):
             job_id=job_id,
             sns=sns,
             topic_arn=topic_arn,
-            first_attempt_only=True,
         ))
     return outcomes
 
@@ -69,8 +64,16 @@ def main():
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(
         '%(levelname)s %(message)s '
-        'job_id=%(job_id)s outcome=%(dispatch_outcome)s',
-        defaults={'job_id': '-', 'dispatch_outcome': '-'},
+        'job_id=%(job_id)s outcome=%(dispatch_outcome)s '
+        'attempt=%(attempt_count)s next=%(next_attempt_at)s '
+        'error=%(last_error_code)s',
+        defaults={
+            'job_id': '-',
+            'dispatch_outcome': '-',
+            'attempt_count': '-',
+            'next_attempt_at': '-',
+            'last_error_code': '-',
+        },
     ))
     logging.basicConfig(level=logging.INFO, handlers=[handler])
     topic_arn = os.environ.get('SNS_TOPIC_ARN', '').strip()

@@ -1,8 +1,8 @@
 # Local development (US-019.1)
 
 This is the bootstrap portion of Section 3.2 and AC-022 in the RAD. It provides
-PostgreSQL, FastAPI, Keycloak, SNS/SQS emulation, a first-attempt dispatcher,
-and an idle ZAP worker with the pinned scanner runtime. Production submission
+PostgreSQL, FastAPI, Keycloak, SNS/SQS emulation, a dispatcher with bounded
+publication recovery, and an idle ZAP worker with the pinned scanner runtime. Production submission
 and team-scoped retrieval are implemented; scanner adapters remain future work.
 US-004.1 adds job/dispatch-intent tables and Alembic migrations; apply them explicitly as described in the
 [database migration guide](database-migrations.md). The worker explicitly logs
@@ -174,8 +174,8 @@ trusted token validation and the `require_identity` dependency using the OIDC
 settings above; see [Authentication](authentication.md) for behavior and tests.
 Production scan submission and retrieval require JWT validation and team-scoped
 authorization. US-006.1 replaces the idle dispatcher command with automatic
-first-attempt publication; retry/recovery remains US-006.3. US-007 will replace
-the idle worker command with actual execution. The worker
+publication; US-006.3 adds bounded retry and expired-claim recovery. US-007 will
+replace the idle worker command with actual execution. The worker
 image already contains `zap-baseline.py`, with CPU and memory limits in Compose.
 No scan execution or private-network target exception is enabled here.
 
@@ -281,8 +281,8 @@ Matching duplicates are allowed. Without the flag, tests skip explicitly.
 These tests accept only the default container LocalStack endpoints and use dummy
 credentials. They establish local routing configuration, not real AWS IAM
 enforcement, application dispatch, outage recovery, or worker execution. FR-016
-and AC-003 are covered locally; full FR-014/AC-007 dispatcher recovery remains
-future work. See the [test guide](../tests/README.md) and
+and AC-003 are covered locally; US-006.3 adds separate FR-014/AC-007
+publication-recovery verification. See the [test guide](../tests/README.md) and
 [Publish–Subscribe pattern](design-pattern/publish-subscribe.md).
 
 For a later real AWS deployment, Terraform should create equivalent topics,
@@ -312,20 +312,27 @@ docker compose logs --tail 50 dispatcher
 
 This rebuilds the shared image and replaces/starts the dispatcher, while leaving
 an already running API container in place. Starting it will publish eligible
-unattempted application jobs. Use `docker compose stop dispatcher` to stop it.
+application jobs, including due retries and expired claims within their budget.
+Use `docker compose stop dispatcher` to stop it.
 The restart policy is `unless-stopped`. Existing containers do not receive source
 changes until rebuilt/recreated; running tests with a source bind mount does not
 deploy them. Implementation verification uses an isolated subprocess/schema/topic
 and does not activate this process against application jobs.
 
-Polling selects at most ten first attempts per pass and waits two seconds.
+Polling selects at most ten due attempts per pass and waits two seconds.
 Connection/read timeouts are 3/5 seconds, with one SDK attempt. SIGTERM/SIGINT stop
 new work and let the active call finish. `/tmp/dispatcher-ready` indicates process
 startup/liveness only; it does not report PostgreSQL/SNS readiness or progress.
-Logs include job IDs and publication outcomes without targets or credentials.
+Logs include job IDs, outcomes, attempt counts, retry times and safe error codes
+without targets or credentials.
 
-Publication failures retain durable intent and a safe error code. Failed,
-invalid, or interrupted attempts are not selected again automatically; retry and
-expired-attempt recovery remain US-006.3. No worker/scanner execution is added.
+US-006.3 limits publication to five total committed attempts. Failures retry after
+jittered exponential delays of 1–2, 2–4, 4–8 and 8–16 seconds, plus polling latency.
+Interrupted claims become eligible after the 60-second lease plus saved backoff.
+Invalid/exhausted intent stays stored and requires operator action; a restart
+does not reset the budget. A final interrupted attempt is identifiable from its
+counter and expired lease. Use the publication guide's read-only SQL and preserve
+diagnostics before planning targeted recovery. No automatic reset or external
+alerting is provided. No worker/scanner execution is added.
 See [Job publication](job-publication.md) for the contract, operations, duplicate
 risk, limitations, and [tests](../tests/README.md#us-0061-versioned-publication-and-dispatcher).

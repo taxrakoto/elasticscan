@@ -5,6 +5,8 @@ import subprocess
 import sys
 import time
 import unittest
+from contextlib import contextmanager
+from datetime import timedelta
 from pathlib import Path
 from threading import Event
 from unittest.mock import Mock
@@ -15,12 +17,13 @@ from alembic import command
 from alembic.config import Config
 from botocore.config import Config as AWSConfig
 from botocore.exceptions import ClientError, EndpointConnectionError
-from sqlalchemy import create_engine, select, update
+from sqlalchemy import create_engine, func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.team import TeamContext
 from app.db.session import database_url, make_engine, make_session_factory
 from app.dispatchers.main import run_pass
-from app.dispatchers.publication import publish_job
+from app.dispatchers.publication import MAX_ATTEMPTS, publish_job
 from app.models import DispatchIntent, Job
 from app.schemas import ZapSubmission
 from app.services.acceptance import accept_scan
@@ -83,6 +86,22 @@ class PublicationTests(unittest.TestCase):
             return session.scalar(select(DispatchIntent).where(
                 DispatchIntent.job_id == self.job_id,
             ))
+
+    def change_intent(self, **values):
+        with self.sessions.begin() as session:
+            session.execute(
+                update(DispatchIntent)
+                .where(DispatchIntent.job_id == self.job_id)
+                .values(**values)
+            )
+
+    def make_due(self, **values):
+        self.change_intent(
+            next_attempt_at=(
+                func.clock_timestamp() - timedelta(seconds=1)
+            ),
+            **values,
+        )
 
     def delete_queue(self, sqs, name):
         try:
@@ -197,24 +216,221 @@ class PublicationTests(unittest.TestCase):
         ), ['published'])
         self.assertIsNotNone(self.intent().published_at)
 
-    def test_dispatcher_does_not_automatically_retry_failure(self):
+    def test_dispatcher_waits_then_recovers_saved_failure(self):
         self.sns.publish.side_effect = EndpointConnectionError(
             endpoint_url='http://unavailable.invalid/',
         )
         options = {
-            'sns': self.sns, 'topic_arn': 'fixture-topic', 'stopped': Event(),
+            'sns': self.sns,
+            'topic_arn': 'fixture-topic',
+            'stopped': Event(),
         }
-        self.assertEqual(run_pass(self.sessions, **options), ['failed'])
+        with self.assertLogs(
+            'app.dispatchers.publication', level='INFO',
+        ) as logs:
+            self.assertEqual(
+                run_pass(self.sessions, **options), ['failed'],
+            )
+
+        intent = self.intent()
+        with self.sessions() as session:
+            now = session.scalar(select(func.clock_timestamp()))
+        self.assertGreater(intent.next_attempt_at, now)
+        self.assertEqual(logs.records[-1].attempt_count, 1)
+        self.assertEqual(
+            logs.records[-1].last_error_code,
+            'sns_publication_failed',
+        )
+        self.assertNotEqual(
+            logs.records[-1].next_attempt_at, '-',
+        )
         self.assertEqual(run_pass(self.sessions, **options), [])
+        self.assertEqual(self.publish(), 'skipped')
         self.sns.publish.assert_called_once()
-        self.assertEqual(self.publish(first_attempt_only=True), 'skipped')
+
+        self.make_due()
+        self.assertEqual(
+            self.publish(first_attempt_only=True), 'skipped',
+        )
+        self.sns.publish.side_effect = None
+        self.engine.dispose()
+
+        self.assertEqual(
+            run_pass(self.sessions, **options), ['published'],
+        )
+        self.assertEqual(self.intent().attempt_count, 2)
+        self.assertIsNotNone(self.intent().published_at)
+        self.assertIsNone(self.intent().last_error_code)
+        with self.sessions() as session:
+            job = session.get(Job, self.job_id)
+            self.assertEqual(job.status, 'pending')
+            self.assertEqual(job.parameters, self.payload['parameters'])
+
+    def test_retry_budget_preserves_exhausted_intent(self):
+        self.sns.publish.side_effect = EndpointConnectionError(
+            endpoint_url='http://unavailable.invalid/',
+        )
+        options = {
+            'sns': self.sns,
+            'topic_arn': 'fixture-topic',
+            'stopped': Event(),
+        }
+        with self.assertLogs(
+            'app.dispatchers.publication', level='INFO',
+        ) as logs:
+            for attempt in range(1, MAX_ATTEMPTS + 1):
+                self.make_due()
+                expected = (
+                    'exhausted'
+                    if attempt == MAX_ATTEMPTS else 'failed'
+                )
+                self.assertEqual(
+                    run_pass(self.sessions, **options), [expected],
+                )
+                self.assertEqual(
+                    self.intent().attempt_count, attempt,
+                )
+
+        self.assertEqual(
+            logs.records[-1].dispatch_outcome, 'exhausted',
+        )
+        self.assertEqual(
+            logs.records[-1].attempt_count, MAX_ATTEMPTS,
+        )
+        self.make_due()
+        self.assertEqual(run_pass(self.sessions, **options), [])
+        self.assertEqual(self.publish(), 'skipped')
+        self.assertEqual(self.sns.publish.call_count, MAX_ATTEMPTS)
+        intent = self.intent()
+        self.assertIsNone(intent.published_at)
+        self.assertIsNone(intent.suppressed_at)
+        self.assertIsNone(intent.claim_token)
+        self.assertEqual(
+            intent.last_error_code, 'sns_publication_failed',
+        )
+        with self.sessions() as session:
+            self.assertEqual(
+                session.get(Job, self.job_id).status, 'pending',
+            )
+
+    def test_active_claim_waits_and_expired_claim_recovers(self):
+        self.make_due(
+            attempt_count=1,
+            claim_token=uuid4(),
+            lease_expires_at=(
+                func.clock_timestamp() + timedelta(seconds=60)
+            ),
+        )
+        options = {
+            'sns': self.sns,
+            'topic_arn': 'fixture-topic',
+            'stopped': Event(),
+        }
+        self.assertEqual(run_pass(self.sessions, **options), [])
+        self.assertEqual(self.publish(), 'skipped')
+        self.sns.publish.assert_not_called()
+
+        self.make_due(
+            lease_expires_at=(
+                func.clock_timestamp() - timedelta(seconds=1)
+            ),
+        )
+        self.assertEqual(
+            run_pass(self.sessions, **options), ['published'],
+        )
+        self.assertEqual(self.intent().attempt_count, 2)
+        self.assertIsNone(self.intent().claim_token)
+
+    def test_interrupted_final_attempt_cannot_exceed_budget(self):
+        self.make_due(
+            attempt_count=MAX_ATTEMPTS,
+            claim_token=uuid4(),
+            lease_expires_at=(
+                func.clock_timestamp() - timedelta(seconds=1)
+            ),
+        )
+        self.assertEqual(run_pass(
+            self.sessions,
+            sns=self.sns,
+            topic_arn='fixture-topic',
+            stopped=Event(),
+        ), [])
+        self.assertEqual(self.publish(), 'skipped')
+        self.sns.publish.assert_not_called()
+        self.assertIsNone(self.intent().published_at)
+        self.assertEqual(
+            self.intent().attempt_count, MAX_ATTEMPTS,
+        )
+
+    def test_invalid_message_is_not_retried_automatically(self):
+        self.change_intent(schema_version=2)
+        self.assertEqual(run_pass(
+            self.sessions,
+            sns=self.sns,
+            topic_arn='fixture-topic',
+            stopped=Event(),
+        ), ['invalid'])
+        self.make_due()
+        self.assertEqual(run_pass(
+            self.sessions,
+            sns=self.sns,
+            topic_arn='fixture-topic',
+            stopped=Event(),
+        ), [])
+        self.assertEqual(self.publish(), 'skipped')
         self.assertEqual(self.intent().attempt_count, 1)
+        self.sns.publish.assert_not_called()
+
+    def test_finalization_failure_allows_duplicate_publication(self):
+        @contextmanager
+        def fail_after_publish():
+            with self.sessions.begin() as session:
+                yield session
+                if self.sns.publish.called:
+                    raise SQLAlchemyError(
+                        'Injected finalization failure',
+                    )
+
+        broken_sessions = Mock()
+        broken_sessions.begin.side_effect = fail_after_publish
+
+        with self.assertRaises(SQLAlchemyError):
+            publish_job(
+                broken_sessions,
+                job_id=self.job_id,
+                sns=self.sns,
+                topic_arn='fixture-topic',
+            )
+
+        intent = self.intent()
+        self.assertIsNone(intent.published_at)
+        self.assertIsNotNone(intent.claim_token)
+        self.assertEqual(intent.attempt_count, 1)
+        first_request = self.sns.publish.call_args.kwargs
+
+        self.make_due(
+            lease_expires_at=(
+                func.clock_timestamp() - timedelta(seconds=1)
+            ),
+        )
+        self.assertEqual(run_pass(
+            self.sessions,
+            sns=self.sns,
+            topic_arn='fixture-topic',
+            stopped=Event(),
+        ), ['published'])
+        self.assertEqual(self.sns.publish.call_count, 2)
+        self.assertEqual(
+            self.sns.publish.call_args.kwargs, first_request,
+        )
+        self.assertEqual(self.intent().attempt_count, 2)
+        self.assertIsNotNone(self.intent().published_at)
 
     @unittest.skipUnless(
         os.environ.get('RUN_LOCALSTACK_TESTS') == '1',
         'Set RUN_LOCALSTACK_TESTS=1 for real publication routing',
     )
-    def test_saved_job_reaches_isolated_zap_queue(self):
+    def test_saved_job_reaches_queue_after_sns_access_recovers(self):
         endpoint = 'http://localstack:4566'
         if any(os.environ.get(name) != endpoint for name in (
             'SNS_ENDPOINT_URL', 'SQS_ENDPOINT_URL',
@@ -257,15 +473,62 @@ main.make_engine = lambda: create_engine(database_url(), connect_args={
 })
 main.main()
 '''
-        process = subprocess.Popen(
-            [sys.executable, '-B', '-c', script],
-            env={
-                **os.environ,
-                'SNS_TOPIC_ARN': resources['topic_arn'],
-                'TEST_PUBLICATION_SCHEMA': self.schema,
-            },
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+        def start_process(sns_endpoint):
+            return subprocess.Popen(
+                [sys.executable, '-B', '-c', script],
+                env={
+                    **os.environ,
+                    'SNS_TOPIC_ARN': resources['topic_arn'],
+                    'SNS_ENDPOINT_URL': sns_endpoint,
+                    'TEST_PUBLICATION_SCHEMA': self.schema,
+                },
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+            )
+
+        def stop_process(process):
+            process.terminate()
+            try:
+                output, _ = process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                output, _ = process.communicate()
+                self.fail('Dispatcher did not stop after SIGTERM')
+            self.assertEqual(process.returncode, 0, output)
+            self.assertFalse(
+                Path('/tmp/dispatcher-ready').exists(),
+            )
+            return output
+
+        # Refuse SNS access only for this isolated dispatcher process.
+        process = start_process('http://127.0.0.1:1')
+        try:
+            deadline = time.monotonic() + 15
+            while time.monotonic() < deadline:
+                if self.intent().last_error_code is not None:
+                    break
+                if process.poll() is not None:
+                    break
+                time.sleep(0.1)
+            intent = self.intent()
+            self.assertEqual(
+                intent.last_error_code, 'sns_publication_failed',
+            )
+            self.assertIsNone(intent.published_at)
+            self.assertGreaterEqual(intent.attempt_count, 1)
+            self.assertLess(intent.attempt_count, MAX_ATTEMPTS)
+        finally:
+            failed_output = stop_process(process)
+
+        self.assertIn(
+            f'job_id={self.job_id} outcome=failed',
+            failed_output,
         )
+        self.engine.dispose()
+
+        # A new process restores real LocalStack SNS access.
+        process = start_process(endpoint)
         try:
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
@@ -275,19 +538,18 @@ main.main()
                     break
                 time.sleep(0.1)
             self.assertIsNotNone(self.intent().published_at)
-            self.assertTrue(Path('/tmp/dispatcher-ready').exists())
+            self.assertGreaterEqual(self.intent().attempt_count, 2)
+            self.assertTrue(
+                Path('/tmp/dispatcher-ready').exists(),
+            )
         finally:
-            process.terminate()
-            try:
-                output, _ = process.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                process.kill()
-                output, _ = process.communicate()
-                self.fail('Dispatcher did not stop after SIGTERM')
-        self.assertEqual(process.returncode, 0, output)
+            output = stop_process(process)
+
         self.assertIn('dispatcher_started', output)
-        self.assertIn(f'job_id={self.job_id} outcome=published', output)
-        self.assertFalse(Path('/tmp/dispatcher-ready').exists())
+        self.assertIn(
+            f'job_id={self.job_id} outcome=published',
+            output,
+        )
         received = []
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline and not received:

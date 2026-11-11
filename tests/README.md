@@ -426,14 +426,17 @@ per test. It verifies versioned content, matching SNS attributes, acknowledgment
 and UTC timestamp persistence, unchanged pending job, safe failure/missing-ack
 codes, invalid stored version, committed claims and competitor exclusion,
 stale-owner rejection, missing/suppressed intent exclusion, automatic discovery,
-and no automatic retry after failure. Schema cleanup runs on failures too.
+and bounded automatic recovery after failure (US-006.3). Schema cleanup runs on
+failures too.
 
 Its LocalStack check provisions and removes unique resources, requires the
 existing default emulator endpoints, and starts the real dispatcher entry point
 in a child process. Only its database engine factory is injected to confine
-queries to the disposable schema. The process automatically publishes the saved
-job, logs its UUID, handles SIGTERM, removes its marker and exits successfully.
-The test compares queue JSON with the shared contract. Application queues and
+queries to the disposable schema. US-006.3 first starts it with an unreachable
+local SNS endpoint and checks its committed failure. A new process restores
+LocalStack access, discovers the same saved job and publishes it without resetting
+the attempt count. Both handle SIGTERM and remove their liveness marker. The test
+compares received queue JSON with the shared contract and allows duplicates. Application queues and
 jobs are untouched. Without service flags, applicable tests explicitly skip.
 
 ```sh
@@ -443,5 +446,63 @@ docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TEST
 Run the full PostgreSQL/Keycloak/LocalStack suite using the full regression command
 in the US-006.2 section. The new publisher plus existing attribute-filter tests
 cover local FR-015/AC-003 publication/routing. Failure retention contributes to
-FR-014/AC-007; automatic SNS recovery, real AWS IAM, worker consumption and full
-end-to-end execution remain separate work. See [Job publication](../docs/job-publication.md).
+FR-014/AC-007; US-006.3 adds automatic recovery within the retry budget. Real AWS
+IAM, worker consumption and full end-to-end execution remain separate work. See [Job publication](../docs/job-publication.md).
+
+
+## US-006.3: bounded publication recovery
+
+The dispatcher unit tests verify exponential delay/jitter bounds, the cap and
+discovered-job calls without the first-attempt restriction. PostgreSQL tests cover:
+
+- No premature retry, then publication of the saved job after recovery using a
+  fresh connection pool.
+- Five total attempts, a committed `exhausted` outcome and preserved pending job
+  and unpublished/unsuppressed intent; no sixth call through discovery or direct
+  publication.
+- Active-claim exclusion, expired-claim recovery and interrupted-final-attempt
+  exclusion at the budget boundary.
+- Invalid saved-message exclusion without a repeated validation loop.
+- A failed finalization transaction after mocked SNS success, followed by identical
+  republication after simulated lease expiry. Duplicate publication is permitted.
+- Safe log fields containing attempt count, next retry time and classified error.
+
+Tests advance due/lease times only in their disposable schemas. The LocalStack
+process test uses actual network clients: SNS access is refused through an
+unreachable local endpoint, then restored by restarting with the emulator endpoint.
+The same persisted job reaches its isolated ZAP queue. Shared LocalStack services,
+application jobs/queues and the running dispatcher are not modified. Cleanup
+removes temporary schemas, topics and queues, including on test failures.
+
+Focused command from `elasticscan/`:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_dispatcher tests.unit.test_job_message tests.integration.test_publication tests.integration.test_queue_routing -v
+```
+
+Regression command with Keycloak integration explicitly left disabled:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
+```
+
+Without service flags, corresponding integration tests skip. These checks cover
+FR-014/AC-007 publication recovery and existing FR-015/FR-016/AC-003 routing;
+existing HTTP/storage tests cover failed initial acceptance and rollback.
+No real AWS, scanner execution, proactive alerting or arbitrary-duration outage
+recovery is claimed. See [Job publication](../docs/job-publication.md) for code
+defaults, exhaustion inspection and operator recovery boundaries. Source-mounted
+tests do not deploy changes to running application containers.
+
+
+US-006.3 verification passed all 25 focused checks. Full discovery with PostgreSQL
+and LocalStack passed 103 tests and explicitly skipped four Keycloak tests (107
+discovered); Keycloak was left unchanged. Changed Python syntax, 64 local
+Markdown links/anchors and Git whitespace checks passed. The documented inspection
+SQL identified due, exhausted and invalid records and excluded published records
+in a disposable migrated schema. Publication schemas and publication/routing
+LocalStack topics/queues were confirmed removed. The cleanup inspection script
+was corrected to close SDK clients explicitly after an initial context-manager
+compatibility error; its final check passed. No application image/container was
+rebuilt or replaced, and no scan ran. There were no material implementation
+changes from the validated preview.

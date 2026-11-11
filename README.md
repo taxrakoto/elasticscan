@@ -7,7 +7,7 @@ The MVP uses OWASP ZAP baseline scanning against authorized, allowlisted public 
 ## Current status
 
 The local bootstrap stack is implemented: API liveness, PostgreSQL, Keycloak with
-two team fixtures, LocalStack SNS/SQS provisioning, a first-attempt dispatcher,
+two team fixtures, LocalStack SNS/SQS provisioning, a dispatcher with bounded publication recovery,
 and an idle ZAP worker process. US-004.1 adds SQLAlchemy job/dispatch-intent
 storage and versioned Alembic migrations. US-001.1 adds trusted JWT validation and a reusable
 FastAPI bearer-authentication dependency. US-002.1 adds authorized team-context
@@ -167,12 +167,13 @@ Follow `implementation_sequence` in `../user-stories.csv` for the recommended so
 The `depends_on` column lists prerequisite subtask IDs. Independent tasks can run in parallel when their agreed contracts and fixtures are available. Parent stories group related outcomes and do not have their own implementation sequence.
 
 
-## Versioned job publication (US-006.1)
+## Versioned job publication (US-006.1 and US-006.3)
 
-The separate dispatcher container now discovers committed, eligible first-attempt
-jobs and publishes version-one messages to SNS with the matching `scan_type`
-attribute. Short database claims and conditional finalization record publication
-outcomes without holding locks during SNS calls. The worker remains idle.
-Automatic retries and interrupted-attempt recovery remain US-006.3; a failed
-publication retains its durable intent. See [Job publication](docs/job-publication.md)
+The separate dispatcher container discovers committed, eligible jobs and publishes
+version-one messages to SNS with the matching `scan_type` attribute. Short claims
+and conditional finalization record outcomes without holding locks during SNS
+calls. US-006.3 adds up to five total attempts, jittered backoff and expired-claim
+recovery. Invalid/exhausted intent remains available for operator inspection;
+prolonged outages require intervention and uncertain outcomes can cause duplicate
+publication. The worker remains idle. See [Job publication](docs/job-publication.md)
 and [dispatcher operation](docs/local-development.md#us-0061-dispatcher-process).

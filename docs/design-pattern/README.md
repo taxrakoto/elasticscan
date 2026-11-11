@@ -8,7 +8,7 @@ that a pattern's application behavior has been implemented.
 | Pattern | Application | Current status |
 | --- | --- | --- |
 | [Publish–Subscribe](publish-subscribe.md) | SNS subscriptions route scan messages to scanner-specific SQS queues | Local infrastructure implemented; US-006.2 adds isolated routing/configuration and reprovisioning tests; US-006.1 adds versioned publication and first-attempt dispatch; worker consumption pending |
-| [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Atomic acceptance in US-004.2; versioned publication and first-attempt dispatcher in US-006.1; automatic retries/recovery pending |
+| [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Atomic acceptance in US-004.2; versioned publication in US-006.1; bounded retries, jittered backoff and expired-claim recovery in US-006.3; worker recovery pending |
 | [Idempotent Consumer](idempotent-consumer.md) | Handle repeated queue deliveries through durable worker claims and terminal-state protection | Guarded lifecycle persistence groundwork implemented in US-008.1; complete queue consumer, renewable leases, execution, and acknowledgment pending |
 | [Dependency Injection](dependency-injection.md) | FastAPI supplies verified identity, policy, team context, and database factory | Production submission in US-003.2 and team-scoped retrieval in US-009.1; tests inject isolated storage and controlled external responses |
 | [Value Object](value-object.md) | Immutable authorized context and acceptance snapshot | `TeamContext` implemented in US-002.1/US-002.2; `AcceptedScan` added in US-004.2 |
