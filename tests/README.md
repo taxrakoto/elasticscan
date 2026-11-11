@@ -541,3 +541,43 @@ Keycloak remained unchanged. Syntax checks passed for all four new Python files,
 checks passed. Worker test schemas were confirmed removed. The final diff matched
 the approved scope. No real scanner ran or application image/container was rebuilt
 or replaced. Full AC-018 execution acceptance remains subsequent work.
+
+
+## US-014.1: execution claims and leases
+
+`integration/test_execution_leases.py` adds eight tests against real migrated,
+disposable PostgreSQL schemas. Checks cover simultaneous claims and terminal
+writes, token/worker ownership, positive configurable lease duration, UTC times,
+unchanged job identity, renewal without shortening expiry, expired/missing-token
+and stale-token rejection, rollback of claims/renewal/completion, invalid inputs,
+unknown jobs, pending cancellation and current-clock checks in an older transaction.
+Expiry and replacement attempts are set directly as fixtures; there is no recovery
+loop. Existing worker tests also verify the adapter receives the committed claim
+token and that competing validated deliveries invoke it once.
+
+Focused command from `elasticscan/`, with PostgreSQL healthy:
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_execution_leases tests.integration.test_job_lifecycle tests.integration.test_zap_worker tests.unit.test_zap_worker tests.unit.test_job_message -v
+```
+
+Run the US-006.3 PostgreSQL/LocalStack full-discovery command for regressions, with
+Keycloak tests left disabled. Without PostgreSQL opt-in these database tests skip.
+Test schemas are removed on completion, including failures. Tests launch no real
+scanner or permanent jobs and do not replace running application containers.
+The existing schema is reused without a migration. These checks support AC-006;
+full AC-008 queue visibility/acknowledgment and bounded recovery remain
+US-014.2/US-014.3. See [Execution claims and leases](../docs/execution-leases.md)
+for callable contracts, transaction and clock rules, provisional defaults and
+remaining periodic-renewal/execution boundaries.
+
+On 2026-11-11, all 24 focused checks passed, including the eight new lease tests.
+Full PostgreSQL/LocalStack discovery passed 118 tests and explicitly skipped four
+Keycloak tests (122 discovered); Keycloak remained unchanged. Syntax checks passed
+for all five affected Python files, 40 local documentation links/anchors and fenced
+blocks passed, and Git whitespace checks passed. Lease and worker test schemas
+were confirmed removed. The clock test was tightened within the approved behavior
+to distinguish current time from transaction-start time, and ownership/input
+assertions were strengthened. No material scope deviation occurred. No scanner ran
+or application image/container was rebuilt or replaced. Periodic renewal,
+queue visibility/acknowledgment and bounded recovery remain subsequent work.

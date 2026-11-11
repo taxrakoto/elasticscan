@@ -94,6 +94,12 @@ class ZapWorkerTests(unittest.TestCase):
             self.assertEqual(stored['worker_id'], 'worker-a')
             self.assertEqual(stored['attempt_count'], 1)
             self.assertIsNotNone(stored['started_at'])
+            self.assertEqual(request.claim_token, stored['claim_token'])
+            self.assertIsInstance(request.claim_token, UUID)
+            self.assertIsNotNone(stored['heartbeat_at'])
+            self.assertGreater(
+                stored['lease_expires_at'], stored['heartbeat_at'],
+            )
             self.assertEqual(request.job_id, self.job_id)
             self.assertEqual(request.url, self.payload['parameters']['url'])
             for field in (

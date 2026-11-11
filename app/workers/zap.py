@@ -6,7 +6,7 @@ from pydantic import ValidationError
 from sqlalchemy.orm import sessionmaker
 
 from app.models import Job
-from app.repositories.lifecycle import start_job
+from app.repositories.lifecycle import claim_job
 from app.scanners.base import ScannerAdapter, ScanRequest
 from app.schemas.job_message import JobMessage
 
@@ -26,6 +26,7 @@ def handle_message(
     sessions: sessionmaker,
     worker_id: str,
     adapter: ScannerAdapter,
+    lease_seconds: int = 60,
 ) -> WorkerDecision:
     """No queue acknowledgment or terminal outcome persistence is performed."""
     try:
@@ -50,16 +51,19 @@ def handle_message(
         ):
             return 'inconsistent_message'
 
-        request = ScanRequest(
-            job_id=job.job_id,
-            url=str(message.parameters.url),
-        )
-        if not start_job(
+        token = claim_job(
             session,
             job_id=job.job_id,
             worker_id=worker_id,
-        ):
+            lease_seconds=lease_seconds,
+        )
+        if token is None:
             return 'not_started'
+        request = ScanRequest(
+            job_id=job.job_id,
+            url=str(message.parameters.url),
+            claim_token=token,
+        )
 
     # Transaction exit must succeed before external scanner work begins.
     adapter.run(request)

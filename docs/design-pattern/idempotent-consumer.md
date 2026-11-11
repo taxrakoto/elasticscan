@@ -2,8 +2,10 @@
 
 **Status:** US-008.1 implements guarded lifecycle persistence as groundwork.
 US-007.1 adds reusable message validation and a committed adapter handoff.
+US-014.1 adds per-attempt claim tokens, renewable execution leases and guarded
+terminal writes requiring a current unexpired claim.
 The deployed worker is still an idle bootstrap process. Queue consumption,
-renewable execution leases, recovery, scanner execution, and acknowledgment are
+periodic renewal, recovery, scanner execution, and acknowledgment are
 not implemented yet. This is not a completed idempotent consumer.
 
 ## Problem and application
@@ -83,8 +85,8 @@ not evidence of scanner output validation or cancellation execution.
 These guards are application repository controls, not a database-wide transition
 trigger or proof of exactly-once physical execution. Privileged raw SQL/ORM
 writes can bypass transition predicates. Worker IDs identify the recorded
-execution owner; no running-job reclamation exists here. Before reclamation is
-introduced, US-014 must add per-execution claim-token/lease fencing and renewal.
+execution owner. US-014.1 now adds per-execution tokens and renewable leases;
+running-job reclamation and bounded recovery remain US-014.3.
 Likewise, queue receipt handling, terminal confirmation before
 acknowledgment, and bounded recovery remain future work. Result-count validation
 and safe failure formatting remain US-008.2/US-008.3. See
@@ -93,14 +95,31 @@ and safe failure formatting remain US-008.2/US-008.3. See
 ## Validated handoff (US-007.1)
 
 `app/workers/zap.py:handle_message` validates the shared message version/schema,
-checks it against the saved job, then commits `start_job` before invoking the
+checks it against the saved job, then commits a start before invoking the
 injected scanner adapter. Concurrent deliveries and redelivery cannot invoke the
 adapter twice through this non-reclaiming handler. Missing or inconsistent jobs
 are preserved without invocation; pending cancellation requests block starts.
 Tests confirm terminal-state preservation and precommit failure exclusion.
 
 This remains a consumer foundation: no queue polling, receipt acknowledgment,
-terminal writes, renewable leases or concrete ZAP execution is wired in. An
-adapter exception after commit leaves running state and propagates; no automatic
+terminal persistence orchestration, periodic renewal or concrete ZAP execution is
+wired in. An adapter exception after commit leaves running state and propagates; no automatic
 recovery or completion is inferred. See [Adapter](adapter.md) for decisions,
 component interactions, tests and remaining acceptance boundaries.
+
+## Leased claims (US-014.1)
+
+The handler now uses `claim_job`, forwarding its committed token through the
+immutable scanner request. `renew_job` and `finish_job` require the same worker,
+token and an unexpired lease for running leased jobs. Token omission cannot bypass
+the guard. Row locks serialize decisions; current database time is obtained after
+locking. Terminal persistence clears active token/expiry while preserving outcome
+and worker correlation. Expired claims cannot renew, finish or reclaim themselves.
+
+Eight PostgreSQL tests verify claim/terminal competition, expiry, renewal,
+stale-token rejection, rollback and time checks; worker tests verify committed
+token handoff and duplicate-delivery exclusion. These support AC-006 and provide
+AC-008 groundwork. SQS acknowledgment/visibility and bounded crash recovery remain
+US-014.2/US-014.3. Tokens cannot stop stale scanner processes or guarantee exactly
+one physical scan. See [Execution claims and leases](../execution-leases.md) for
+defaults, transaction requirements, tradeoffs and verification.

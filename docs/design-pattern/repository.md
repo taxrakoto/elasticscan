@@ -125,6 +125,25 @@ SQLAlchemy session synchronization is disabled for these bulk updates. Read
 through a fresh session or explicitly refresh a previously loaded object.
 `tests/integration/test_job_lifecycle.py` verifies competing sessions, terminal
 immutability through the helpers, ownership/UTC preservation, and rollback.
-Semantic result/error validation, renewable leases, recovery, and cancellation
+Semantic result/error validation, bounded recovery, and cancellation
 remain subsequent stories. See [Guarded job lifecycle](../job-lifecycle.md) and
 [Idempotent Consumer](idempotent-consumer.md).
+
+## Execution leases (US-014.1)
+
+`claim_job` and `renew_job` extend the same focused repository module. A claim
+returns a fresh UUID token or None. Renewal and token-protected `finish_job` require
+the current worker/token pair and a strictly unexpired lease. These operations lock
+the job row before reading database clock time and performing guarded updates;
+callers still own commit/rollback. Lease updates preserve team/creator/parameters,
+and successful completion clears active claim metadata atomically with the outcome.
+Legacy nonleased operations remain available but cannot finish a leased job by
+omitting its token. The validated worker handoff now uses leased claims.
+
+This adds serialization and database round trips to prevent stale ownership
+decisions; transactions must remain short. It provides guarded persistence, not
+worker authentication, global SQL enforcement or physical scanner termination.
+Eight disposable-schema integration tests verify competition, renewal, expiry,
+rollback, token fencing and current-clock checks. See
+[Execution claims and leases](../execution-leases.md) for examples, configuration,
+the provisional default, stale ORM-state cautions and remaining recovery work.

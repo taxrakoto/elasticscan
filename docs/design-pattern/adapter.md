@@ -8,7 +8,8 @@ The deployed worker remains an idle bootstrap process.
 
 Message validation and database claims should not depend on scanner commands.
 `app/scanners/base.py` defines `ScannerAdapter.run(request) -> None` and the
-frozen `ScanRequest(job_id, url)` value object. A Protocol describes the method
+frozen `ScanRequest(job_id, url, claim_token)` value object (token added in
+US-014.1). A Protocol describes the method
 an implementation must provide without requiring inheritance. The caller injects
 both the adapter and session factory into `app/workers/zap.py:handle_message`.
 This reuses [Dependency Injection](dependency-injection.md) and the existing
@@ -22,10 +23,13 @@ extension point; adapting ZAP's actual process interface remains later work.
 2. Load the saved job by UUID. Compare scan type and the entire parameter object
    with the message's JSON-serialized typed parameters. Accepted jobs store that
    same normalized representation; differently serialized saved URLs are rejected.
-3. Call the atomic pending-to-running guard, excluding cancellation requests,
-   competing starts and nonpending jobs. Commit the transaction.
+3. Call `claim_job` to atomically claim pending work with a fresh token and lease,
+   excluding cancellation requests, competing starts and nonpending jobs. Commit
+   the transaction. `lease_seconds` defaults to a provisional 60 seconds.
 4. Only after successful commit, call the adapter with the saved job ID and
-   validated URL. No untrusted command or ownership field is forwarded.
+   validated URL plus committed execution token. The token is internal metadata,
+   not part of the target URL or scanner command. No untrusted command or
+   ownership field is forwarded.
 
 | Decision | Meaning |
 | --- | --- |
@@ -40,7 +44,11 @@ receive an SQS receipt handle, poll a queue, delete messages, or persist termina
 results. Database and adapter exceptions propagate. A precommit failure prevents
 invocation; connection loss during commit can leave the saved start uncertain.
 An adapter failure or process crash after commit leaves the job running, with no
-automatic retry. Renewable leases and recovery must precede running-job reclamation.
+automatic retry. US-014.1 adds renewable claim operations, but no periodic renewal
+loop or recovery. Bounded recovery must precede running-job reclamation. See
+[Execution claims and leases](../execution-leases.md) for token-protected writes,
+expiry and ownership-loss handling. Passing the token does not itself stop a
+scanner process when authority expires.
 Pending cancellation metadata blocks starts, but running cancellation and deletion
 tombstones are not implemented here. Concurrent deletion/reclamation is outside
 this foundation. No exactly-once physical execution guarantee is claimed.

@@ -8,6 +8,7 @@ from uuid import UUID
 class ScanRequest:
     job_id: UUID
     url: str
+    claim_token: UUID
 
 
 class ScannerAdapter(Protocol):

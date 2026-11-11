@@ -9,14 +9,17 @@ AC-005 remains dependent on subsequent scanner/worker stories.
 ## Callable contract
 
 All functions live in `app/repositories/lifecycle.py` and receive a SQLAlchemy
-`Session` and job UUID. They return `True` if one row changed, or `False` if the
-job is absent or does not match the transition guard. Database exceptions
+`Session` and job UUID. Boolean operations return `True` if one row changed, or
+`False` if the job is absent or does not match the transition guard. US-014.1's
+`claim_job` instead returns a new UUID token or `None`. Database exceptions
 propagate. The functions neither authenticate callers nor commit transactions.
 
 | Function | Guard | Atomic changes |
 | --- | --- | --- |
-| `start_job(session, *, job_id, worker_id)` | Pending, with no recorded cancellation request | Running status, worker ID, incremented attempt count, start time |
-| `finish_job(session, *, job_id, worker_id, status, result=None, error=None)` | Running, owned by the supplied worker | Completed/result or failed/error, unused outcome null, finish time |
+| `start_job(session, *, job_id, worker_id)` | Pending, no cancellation request or claim metadata; legacy nonleased path | Running status, worker ID, incremented attempt count, start time |
+| `claim_job(session, *, job_id, worker_id, lease_seconds=60)` | Pending, no cancellation request or claim metadata | Running, worker/token, incremented attempt, start/heartbeat/expiry |
+| `renew_job(session, *, job_id, worker_id, claim_token, lease_seconds=60)` | Running, same worker/token and strictly unexpired | Heartbeat and nonshortening expiry |
+| `finish_job(session, *, job_id, worker_id, status, result=None, error=None, claim_token=None)` | Running, owned by supplied worker; leased jobs require current unexpired token | Completed/result or failed/error, unused outcome null, finish time, clears active token/expiry |
 | `fail_pending_job(session, *, job_id, error)` | Pending | Failed status, error object, result null, finish time |
 
 Worker IDs must be nonempty strings without surrounding whitespace and must
@@ -35,21 +38,22 @@ the cancellation-request start guard is not a completed cancellation feature.
 ## Transaction ownership
 
 ```python
-from app.repositories.lifecycle import start_job
+from app.repositories.lifecycle import claim_job
 
 with sessions.begin() as session:
-    changed = start_job(
+    token = claim_job(
         session,
         job_id=job_id,
         worker_id='worker-instance-123',
     )
-# True becomes durable only after successful transaction exit/commit.
+# Token becomes durable only after successful transaction exit/commit.
 ```
 
 Workers must not launch a scanner until the successful start transaction
 commits. US-007.1's reusable `app/workers/zap.py:handle_message` validates the
-message against the saved job and commits the guarded start before calling its
-injected adapter. Its tests use a recording adapter; real ZAP execution is pending.
+message against the saved job and, since US-014.1, commits a leased claim before
+calling its injected adapter. Its tests use a recording adapter; real ZAP
+execution is pending.
 Terminal outcome persistence must also commit before queue acknowledgment;
 those integrations are not implemented here. A later failure in the same
 transaction rolls back status, outcome, attempts, and timestamps together.
@@ -63,15 +67,19 @@ database consistency checks reject invalid state/outcome combinations.
 
 ## Atomic guards and timestamps
 
-Each operation executes one `UPDATE ... WHERE ... RETURNING job_id` statement.
-The state/worker checks and writes are one database operation. Concurrent updates
-to the same job are coordinated by PostgreSQL; a competing state change makes
+The original nonleased operations use one conditional update. US-014.1's claim,
+renewal and token-protected completion first lock the row and obtain current
+database time, then execute a guarded update. The lock is held until the caller's
+transaction ends. Concurrent updates to the same job are coordinated by
+PostgreSQL; a competing state change makes
 the losing guard stop matching. There is no application read-then-write gap.
-The Boolean result deliberately does not explain which guard failed; a caller
-needing that information must perform a separate read.
+The Boolean/optional-token result deliberately does not explain which guard
+failed; a caller needing that information must perform a separate read.
 
-Starts use PostgreSQL `statement_timestamp()` for `started_at`; terminal writes
-use it for `finished_at`. The existing `jobs_protect_identity` trigger maintains
+Legacy starts use PostgreSQL `statement_timestamp()` for `started_at`; leased
+claims and terminal writes use current `clock_timestamp()` (after row locking
+for leased operations). Pending service failures retain `statement_timestamp()`.
+The existing `jobs_protect_identity` trigger maintains
 `updated_at` and rejects changes to job identity, team, creator, scan type,
 parameters, and creation time. Timestamps are `TIMESTAMPTZ`; application sessions
 are configured to return UTC. No migration is needed and revision `0001` is
@@ -98,10 +106,12 @@ endpoint, worker authentication, or restricted deployed database role here.
 Privileged raw SQL and direct ORM writes can bypass application transition
 predicates; the existing trigger protects identity, not all lifecycle changes.
 
-No running-job reclamation is implemented. Worker ID checks are sufficient for
-this non-reclaiming foundation, but are not a per-attempt fencing token. Before
-reclaiming jobs, US-014 must add claim tokens, renewable leases, stale-owner
-rejection, and bounded recovery. No heartbeat/lease fields are changed here.
+US-014.1 implements per-attempt claim tokens, renewable leases and stale-owner
+rejection. New worker handoffs use these operations; nonleased compatibility
+helpers cannot finish leased jobs without a token. See
+[Execution claims and leases](execution-leases.md) for duration configuration,
+transaction timing, examples and limits. There is no periodic renewal loop or
+running-job reclamation; bounded recovery remains US-014.3.
 This does not promise exactly-once physical scanner execution across crashes.
 Queue polling, visibility renewal, message acknowledgment, cancellation,
 deletion coordination, and actual scanner execution remain subsequent work.
@@ -124,8 +134,9 @@ Outcome and cancelled-state fixtures are not real scanner results or implemented
 cancellation behavior. Tests contact no target and create no permanent jobs.
 
 These checks support FR-009/FR-010/FR-011/FR-013/FR-025's persistence foundation
-and the transition portions of AC-004/AC-005. Complete AC-006/AC-008 lease,
-recovery, consumer, and acknowledgment acceptance remains future work.
+and the transition portions of AC-004/AC-005. US-014.1 adds concurrent leased
+claims, renewal and stale-writer tests. Complete AC-008 recovery, consumer, and
+acknowledgment acceptance remains future work.
 
 
 On 2026-11-09, all seven focused lifecycle tests passed, and the final full suite
