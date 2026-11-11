@@ -623,3 +623,59 @@ replaced. The private `.env` was unchanged. The final diff matched the approved
 single-origin application phase, with no material deviation. Real ZAP redirect/
 crawl/runtime verification and enforceable network restrictions remain pending;
 the backlog status and successful session history were not changed by these checks.
+
+
+## US-007.2: bounded baseline execution
+
+`unit/test_baseline.py` checks the fixed baseline command, separate crawl/total
+budgets, raw finding-related exit code retention, missing credential options,
+process-group timeout cleanup, temporary-file removal, scope-before-access and
+passive/active execution checks. These tests launch no scanner.
+
+`integration/test_baseline.py` opts in with `RUN_ZAP_BASELINE_TESTS=1` and requires
+the worker image and isolated fixture setup. It runs actual ZAP against a public-
+format address assigned only to a container-local loopback alias with no external
+network. It checks in-origin discovered crawling, passive queue completion,
+active-scan count zero, out-of-origin link exclusion and a one-second startup
+deadline. Findings and raw exit codes are not normalized into persisted outcomes.
+
+```sh
+docker compose build zap-worker
+sh scripts/verify_zap_baseline.sh
+```
+
+The helper uses root/NET_ADMIN only to prepare the disposable fixture, then drops
+to `zap`. No production private-address exception, gateway, application secrets or
+real external target is involved. The host source mount is read-only. Import and
+file-inventory smoke checks must separately run against the built image without
+a source mount, so packaging omissions cannot be hidden by tests.
+
+Run PostgreSQL/LocalStack regression discovery using the existing US-006.3 command
+with Keycloak disabled. Real-scanner tests skip explicitly outside the helper.
+The current worker remains idle and discards adapter output when called through
+`handle_message`; lease renewal, queue acknowledgment, result classification and
+terminal persistence remain subsequent work. See
+[ZAP baseline](../docs/zap-baseline.md) for budget semantics, cleanup guarantees,
+raw-output handling, the existing single-origin scope and remaining acceptance.
+
+On 2026-11-11, the final isolated real-ZAP run passed both tests, including actual
+process-group and temporary-directory cleanup after completion and timeout.
+Fourteen focused baseline/scope/worker unit checks passed; final PostgreSQL/
+LocalStack discovery passed 134 tests with four Keycloak and two separately-run
+real-ZAP tests skipped (140 discovered). Keycloak remained unchanged. The narrowed
+worker image built successfully, and final imports/content checks passed without
+mounting source: API routes/main, dispatchers, services, migrations, tests and
+docs were absent. Five Python files, shell syntax, 44 local documentation links/
+anchors, fenced blocks and Git whitespace checks passed. Worker test schemas and
+disposable scanner containers were confirmed removed.
+
+Initial real runs exposed packaged wildcard API defaults, IPv6 loopback/special
+API Host handling and the Python client's `allow_redirects` argument. These were
+corrected within the approved local-only baseline behavior; earlier blocked test
+containers were stopped and removed. The fixture uses a standard-library Linux
+ioctl because the base image has no `ip` tool; no extra package was added. No
+gateway, external target or private-policy bypass was introduced. No material
+scope deviation occurred. The worker image was built but running application
+containers were not replaced, and the private `.env` was unchanged. Comprehensive
+redirect/network enforcement, live consumption/lease renewal, normalized outcomes
+and terminal persistence remain subsequent work.

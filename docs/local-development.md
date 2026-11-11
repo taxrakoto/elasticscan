@@ -126,6 +126,16 @@ remain allowed. Worker callers must receive the same updated environment.
 Real ZAP crawling and AWS network enforcement remain pending. See
 [Single fixed scanner origin](scanner-scope.md) for configuration and limits.
 
+The reusable [ZAP baseline adapter](zap-baseline.md) runs in the narrowed worker
+image. Its provisional `ZAP_CRAWL_MINUTES=1` and
+`ZAP_TOTAL_TIMEOUT_SECONDS=900` defaults are independent. Build with
+`docker compose build zap-worker`; this does not replace the running idle worker.
+Use `sh scripts/verify_zap_baseline.sh` for isolated real-scanner tests, not a
+public website. Full SQS consumption, lease renewal during execution, normalized
+outcomes and durable completion remain later integrations. The image copies only
+the worker/scanner modules and their shared dependencies, not API routes or the
+dispatcher. The private `.env` is not edited by this task.
+
 The committed `docker/keycloak/realm.json` defines realm `elasticscan` and public
 client `elasticscan-dev`. Registration is disabled. Development-only password
 grants are enabled for command-line fixture token acquisition. Production clients

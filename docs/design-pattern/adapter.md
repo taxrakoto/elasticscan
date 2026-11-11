@@ -1,20 +1,27 @@
 # Adapter
 
 **Status:** US-007.1 implements a reusable worker handoff boundary and tests it
-with a recording adapter. Concrete ZAP execution is pending US-007.2/US-007.3.
+with a recording adapter. US-007.2 adds reusable bounded ZAP baseline execution;
+outcome interpretation remains US-007.3.
 The deployed worker remains an idle bootstrap process.
 
 ## Problem and components
 
 Message validation and database claims should not depend on scanner commands.
-`app/scanners/base.py` defines `ScannerAdapter.run(request) -> None` and the
+`app/scanners/base.py` defines `ScannerAdapter.run(request) -> ScannerOutput | None` and the
 frozen `ScanRequest(job_id, url, claim_token, scope_regex)` value object (token added
 in US-014.1, scope added in the US-005.2 application phase). A Protocol describes the method
 an implementation must provide without requiring inheritance. The caller injects
 both the adapter and session factory into `app/workers/zap.py:handle_message`.
 This reuses [Dependency Injection](dependency-injection.md) and the existing
 [Repository](repository.md) lifecycle functions. The contract is the Adapter
-extension point; adapting ZAP's actual process interface remains later work.
+extension point; US-007.2 supplies the concrete process adapter described below.
+
+US-007.2's `ZapBaselineAdapter` implements the actual process interface using the
+packaged baseline script. `ScannerOutput` retains raw exit code/report and scope,
+passive and active-scan evidence without interpreting findings as runtime failure.
+Hooks adapt the existing context setup to the packaged spider. The worker handler
+still discards the returned output; terminal persistence is not wired in.
 
 ## Interaction and decisions
 
@@ -62,16 +69,18 @@ this foundation. No exactly-once physical execution guarantee is claimed.
 The small contract separates scanner-specific behavior from validation and
 persistence and allows tests to substitute a recording adapter. It introduces
 an indirection and cannot enforce the behavior of a supplied implementation.
-Baseline mode, crawl/total time limits, real redirect/crawl enforcement, process
-cleanup and exit-code interpretation require the concrete ZAP adapter. Worker
+Baseline mode, separate crawl/total limits and process cleanup are implemented by
+the reusable US-007.2 adapter. Full redirect/crawl enforcement and exit-code
+interpretation remain subsequent acceptance work. Worker
 target authorization now reuses the configured policy, but connection-time DNS
 and enforceable outbound network restrictions remain pending.
 
 `app/scanners/scope.py:configure_scope` provides reusable scanner-specific context
 setup. It accepts the committed request and an injected fresh ZAP client, configures
 the rule and returns the context name without making target requests. The future
-adapter must apply it before crawling and pass the name to the spider. Tests use
-recording clients, not a real scanner. See
+adapter must apply it before crawling and pass the name to the spider. US-007.2's
+baseline hooks now do this and verify discovered-link behavior in real ZAP;
+earlier unit checks use recording clients. See
 [Single fixed scanner origin](../scanner-scope.md) for the reduced scope and
 unsatisfied original US-005.2 acceptance requirements.
 
@@ -92,3 +101,18 @@ redelivery, precommit rollback, and adapter exceptions after commit. The test
 adapter performs no network requests or real scanning. See the
 [test guide](../../tests/README.md#us-0071-worker-validation-and-adapter-handoff)
 for commands and actual outcomes.
+
+## Bounded execution (US-007.2)
+
+`app/scanners/baseline.py` adapts an immutable request to a fixed command argument
+list, a bounded child process group and raw immutable output. The packaged script
+and Python image dependencies are coupled to the pinned ZAP runtime; tests must
+verify that integration when changing the base image. Unit mocks alone cannot
+prove actual scanner behavior. The explicit worker Dockerfile excludes unrelated
+application modules and is import-tested without mounting source.
+
+The caller gets no normalized severity summary or durable completion promise.
+Process deadlines and cleanup add lifecycle responsibilities; fresh temporary
+homes isolate per-call artifacts but parent-crash recovery remains separate.
+See [ZAP baseline](../zap-baseline.md) for hooks, provisional budgets, raw output,
+isolated actual-scanner checks and the remaining queue/network/recovery boundaries.

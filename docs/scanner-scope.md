@@ -3,8 +3,12 @@
 The deployment accepts one operator-configured HTTP/HTTPS origin. Reusable worker
 code rechecks a saved job's target and generates its exact ZAP context rule before
 claiming it. This is the approved smaller application phase of US-005.2, not
-completed crawl/network enforcement. The deployed worker remains idle; real
-baseline execution and redirect/crawl verification remain US-007.2.
+completed crawl/network enforcement. The deployed worker remains idle.
+
+US-007.2 adds a reusable [baseline adapter](zap-baseline.md) that applies this
+context to the packaged spider and collects passive/active execution evidence.
+The deployed worker is still idle; complete redirect and network-enforcement
+acceptance must not be inferred from the earlier scope-matching tests.
 
 ## Configuration
 
@@ -52,9 +56,9 @@ to scan. The configured origin is global, not a per-team domain registry.
    with unrelated existing contexts is outside this callable contract.
 
 The regex accepts only the origin and its paths, supports default-port equivalence
-and escapes special characters. Python tests inspect matching behavior; they do
-not prove compatibility with a live ZAP instance. The real client/runtime check
-is part of later scanner integration. DNS resolution occurs before the leased
+and escapes special characters. Python tests inspect matching behavior; US-007.2
+additionally verifies the context in real ZAP against an isolated link fixture.
+Comprehensive redirect behavior remains unverified. DNS resolution occurs before the leased
 claim; no lease is spent resolving the target. Callers should keep transactions
 short and handle denial/recovery through the future message-consumer policy.
 
@@ -68,8 +72,8 @@ socket relay, Docker configuration, database migration or dependency is introduc
 
 The preclaim check is a point-in-time DNS check. It does not pin connections or
 prevent the approved hostname resolving differently later. A matching URL rule
-also does not prove that ZAP will never follow an out-of-scope redirect. Real
-redirect/discovered-link verification remains US-007.2; enforceable outbound
+also does not prove that ZAP will never follow an out-of-scope redirect. US-007.2
+checks discovered-link exclusion; comprehensive redirect verification and enforceable outbound
 network restrictions remain AWS deployment work. A broad HTTPS outbound rule alone
 would not implement origin isolation. No claim of full SSRF protection is made.
 
