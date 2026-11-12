@@ -24,17 +24,20 @@ snapshot, independent of later worker progress. Persistence errors return a safe
 HTTP 503: durable acceptance could not be confirmed. Connection loss during commit
 can leave its outcome uncertain; automatic retries are not implemented and a
 repeated request can create another job. US-009.1 adds authenticated
-`GET /scan/{job_id}` returning `job_id`, `scan_type`, and the current stored
-`status` for the selected authorized team. Any owning-team member can read the
+`GET /scan/{job_id}` returning job identity and current stored state for the
+selected authorized team. US-009.2 adds UTC timestamps, nullable severity counts,
+safe errors and cancellation metadata. See the
+[Retrieval contract](docs/retrieval-contract.md). Any owning-team member can read the
 job. Unknown and cross-team jobs return identical HTTP 404 responses; malformed
-UUIDs return HTTP 422. Full lifecycle details, scanner execution, and
-crawl-time target controls remain feature work.
+UUIDs return HTTP 422. Live queue-to-worker integration, cancellation execution,
+and complete crawl-time target controls remain feature work.
 US-008.1 adds reusable guarded lifecycle functions: pending-to-running,
 worker-owned running-to-completed/failed, and pending failure for exhausted
 service processing. Conditional PostgreSQL updates protect terminal outcomes
-through these operations. The worker process remains idle; scanner
-execution, renewable leases/recovery, semantic result validation, safe error
-formatting, and cancellation behavior remain later stories. See
+through these operations. The deployed worker process remains idle. Reusable
+execution, renewable claims, validated result persistence and safe failures exist
+in subsequent stories; live orchestration, bounded recovery and cancellation
+execution remain pending. See
 [Guarded job lifecycle](docs/job-lifecycle.md).
 
 See [Local development](docs/local-development.md) for credentials, configuration,

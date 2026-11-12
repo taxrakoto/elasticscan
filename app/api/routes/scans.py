@@ -3,6 +3,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -58,6 +59,12 @@ def submit_scan(
 
 @router.get(
     '/scan/{job_id}',
+    summary='Retrieve a team job and its persisted lifecycle details',
+    description=(
+        'Return UTC timestamps and nullable result, safe error, and '
+        'cancellation metadata. Cancelled responses describe stored '
+        'state; cancellation execution is implemented separately.'
+    ),
     response_model=JobStatusResponse,
     responses={
         401: {'description': 'Missing or invalid bearer authentication'},
@@ -86,7 +93,7 @@ def retrieve_scan(
                     detail='Job not found',
                 )
             return JobStatusResponse.model_validate(job)
-    except SQLAlchemyError:
+    except (SQLAlchemyError, ValidationError):
         raise HTTPException(
             status_code=503,
             detail='Job retrieval is temporarily unavailable',

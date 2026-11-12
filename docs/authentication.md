@@ -91,10 +91,11 @@ the same HTTP 404 body, `{"detail":"Job not found"}`, without revealing whether
 another team owns the ID. A selector outside verified membership returns 403
 before looking up a job; it cannot grant access or reveal job existence.
 
-The response currently contains `job_id`, `scan_type`, and the current persisted
-`status`. Lifecycle timestamps and outcomes remain US-009.2. Database read failure
-returns safe HTTP 503. Reading a saved job does not require its original target
-to remain on the submission allowlist and performs no target DNS lookup.
+US-009.2 adds UTC lifecycle timestamps, nullable result summaries, canonical safe
+errors and cancellation metadata to job identity and current persisted status.
+See the [Retrieval contract](retrieval-contract.md). Database read failure or
+incompatible saved response data returns safe HTTP 503. Reading a saved job does
+not require its original target to remain on the submission allowlist and performs no target DNS lookup.
 
 ## Team membership mapping and selection
 

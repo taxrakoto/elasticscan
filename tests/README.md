@@ -793,3 +793,32 @@ and running application containers were unchanged.
 
 Result-summary, lifecycle and execution-lease disposable schemas were confirmed
 removed after verification.
+
+
+## US-009.2: lifecycle response serialization
+
+`retrieval_contract.py` defines version-one examples for pending, running,
+completed, failed and proposed cancelled responses. Submission fixtures do not
+contain these examples and remain unchanged. `unit/test_retrieval_schema.py`
+checks explicit nulls, UTC conversion, valid state shapes, strict integer counts,
+safe error reconstruction and failures before start. No external services are
+needed for these unit checks.
+
+`integration/test_job_retrieval.py` retains US-009.1's authorization and status
+checks and adds production HTTP responses backed by real guarded PostgreSQL
+claims, result writes and safe failures. It covers two-team isolation for every
+state, fresh connections, ZAP normalizer exit 0/1/2, exhausted pending failures,
+legacy message reconstruction and generic 503 for incompatible saved outcomes.
+The cancellation row is a test fixture; a timeout is an injected adapter failure.
+Neither proves live cancellation or a real scanner timeout.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_retrieval_schema tests.integration.test_job_retrieval -v
+```
+
+`python3 scripts/verify_result_summaries.py` runs isolated real ZAP verification,
+then both result-persistence tests and the opt-in HTTP test with those actual
+counts. The normal suite explicitly skips that case without REAL_ZAP_RESULT_JSON.
+Use the standard full regression command with PostgreSQL/LocalStack enabled;
+Keycloak remains separately opt-in. See the
+[Retrieval contract](../docs/retrieval-contract.md) for acceptance boundaries.

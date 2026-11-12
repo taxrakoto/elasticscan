@@ -85,7 +85,7 @@ by owning-team and peer retrieval, reciprocal isolation for two teams, identical
 unknown/cross-team 404s, validated multi-team selection, current persisted status,
 and safe read failure. These support FR-006/FR-027/FR-028 and the read portion of
 AC-017. A test fixture writes a running status directly; that does not establish
-a worker transition. Lifecycle serialization remains US-009.2.
+a worker transition. US-009.2 adds lifecycle serialization as described below.
 
 Centralizing the query reduces the risk of a route omitting its team predicate,
 but future handlers must still call this restricted operation with verified
@@ -186,3 +186,26 @@ The additions to `tests/integration/test_result_summaries.py` verify classified
 exceptions, message reconstruction, fresh-connection/team retrieval, null fields,
 UTC times, rollback, stale/duplicate protection and competing outcomes. See
 [Safe failures](../safe-failures.md) for interactions, examples and acceptance limits.
+
+
+## Lifecycle response boundary (US-009.2)
+
+The existing `find_team_job` query still returns only an authorized team's Job.
+The route in `app/api/routes/scans.py` owns the read session and constructs
+`app/schemas/retrieval.py:JobStatusResponse` before closing it. The response
+model selects public fields, validates lifecycle nullability and counts, converts
+aware dates to UTC and rebuilds errors with the fixed safe catalog. Invalid saved
+data produces a generic 503 without exposing validation or database details.
+
+This reuses Repository and the route's existing dependency injection. Pydantic
+serialization and validation are ordinary boundary techniques, not new patterns.
+Keeping persistence separate from the response contract avoids adding HTTP or
+presentation logic to the repository. It also introduces a stricter compatibility
+boundary: legacy or privileged writes can create rows that the public model
+rejects. The serializer cannot repair those rows or enforce database invariants.
+
+Unit fixtures and production-route PostgreSQL tests cover all five states,
+UTC/nullability, safe messages, invalid saved outcomes, guarded real persistence
+and two-team filtering. The real ZAP verification script supplies actual counts
+to the HTTP test. Cancellation remains fixture-only and live queue orchestration
+is pending. See [Lifecycle retrieval](../retrieval-contract.md).

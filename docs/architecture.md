@@ -109,13 +109,15 @@ never loaded for a later ownership check. The creator is not a read restriction:
 another member of the owning team may read it. Multi-team callers must select
 a verified membership through `X-Team-ID`.
 
-`JobStatusResponse` in `app/schemas/retrieval.py` returns only `job_id`,
-`scan_type`, and current persisted `status`. It is constructed while the session
-is open. Unlike POST acceptance, this is a fresh database read rather than a fixed
-pending snapshot. Internal ownership, target parameters, worker claims, and
-execution metadata are not exposed. Timestamps, findings, scanner errors, and
-cancellation metadata remain US-009.2; real worker outcomes and complete polling
-integration remain subsequent work.
+`JobStatusResponse` in `app/schemas/retrieval.py` returns job identity, current
+persisted status, UTC timestamps, nullable severity counts, canonical safe errors
+and cancellation metadata (US-009.2). It is constructed while the session is open.
+Unlike POST acceptance, this is a fresh database read rather than a fixed pending
+snapshot. Ownership, target parameters and worker claim details are excluded.
+The model validates lifecycle nullability, integer counts, timezone awareness and
+cancellation metadata. Unrecognized errors or invalid saved data return safe 503.
+See the [Retrieval contract](retrieval-contract.md) for all fields and examples.
+Cancellation is fixture-only; live orchestration and complete polling are pending.
 
 Missing/invalid authentication returns HTTP 401; invalid or ambiguous team context
 returns HTTP 403. Authenticated authorized callers receive HTTP 422 for malformed
@@ -131,8 +133,10 @@ owning-team peer access, two-way team isolation, identical 404 responses, malfor
 UUIDs and unauthorized callers without repository lookup, multi-team selection,
 fresh status reads, safe database failure, and generated OpenAPI. A test-only
 status update creates the running fixture; it is not a worker execution test.
-These cover the retrieval portions of FR-005–007, AC-002/AC-004, and AC-017;
-they do not establish full lifecycle serialization or complete worker isolation.
+US-009.2 extends these tests with all five response states, guarded persisted
+outcomes, safe errors, UTC timestamps, invalid legacy rows, and actual ZAP count
+retrieval. These cover the retrieval portions of FR-005–007, AC-002/AC-004 and
+AC-017; full worker orchestration and cancellation execution remain separate.
 
 
 ## Guarded lifecycle persistence (US-008.1)
@@ -150,9 +154,9 @@ All functions return a Boolean changed-row result before caller commit. Database
 exceptions propagate. The existing timestamp/identity trigger remains in force;
 no schema change is required. There is no automatic retry, public execution
 endpoint, running-job reclamation, or background worker integration in this story.
-Existing GET retrieval can read persisted status but still exposes only its
-three-field response. Outcome schemas/validation remain US-008.2/US-008.3 and
-US-009.2. Renewable leases and recovery remain US-014; cancellation remains US-011.
+GET retrieval now exposes validated lifecycle data through US-009.2. Successful
+and safe failure persistence are implemented in US-008.2/US-008.3. Renewable
+claims exist in US-014.1; recovery and cancellation execution remain separate.
 Application guards do not constrain privileged raw SQL or promise exactly-once
 scanner execution. See [Guarded job lifecycle](job-lifecycle.md),
 [Repository](design-pattern/repository.md), and

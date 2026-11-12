@@ -1,4 +1,4 @@
-"""Verify actual isolated ZAP counts through PostgreSQL completion."""
+"""Verify actual isolated ZAP counts through persistence and HTTP retrieval."""
 import json
 from pathlib import Path
 import subprocess
@@ -39,12 +39,15 @@ def main():
             '-w', '/workspace',
             '--entrypoint', 'python',
             'api', '-B', '-m', 'unittest',
-            'tests.integration.test_result_summaries', '-v',
+            'tests.integration.test_result_summaries',
+            'tests.integration.test_job_retrieval.JobRetrievalTests.'
+            'test_actual_zap_counts_are_returned_over_http',
+            '-v',
         ],
         cwd=root,
         check=True,
     )
-    print('Actual ZAP counts persisted and retrieved successfully.')
+    print('Actual ZAP counts persisted and retrieved over HTTP successfully.')
 
 
 if __name__ == '__main__':
