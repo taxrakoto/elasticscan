@@ -148,3 +148,21 @@ repeatable, but does not verify real ZAP redirect behavior or provide network
 isolation. See [Single fixed scanner origin](../scanner-scope.md). The Adapter and
 Dependency Injection patterns are reused; exact-origin checks and regex matching
 are ordinary validation techniques, not additional patterns.
+
+
+## Partial local integration verification (US-019.2)
+
+`tests/integration/test_local_slice.py` overrides only the production session
+factory and target policy. The supplied factory uses a unique migrated real
+PostgreSQL schema; the policy retains public-address checks with controlled DNS
+answers for an uncontacted fixture URL. The authentication and team dependencies
+remain active, using real Keycloak users and actual JWKS signature verification.
+Overrides are restored after every test.
+
+The worker receives that same controlled policy and a test adapter. Production
+publication receives real isolated LocalStack clients except for one injected
+connection failure. Test orchestration connects claim, interpretation, guarded
+terminal storage and acknowledgment; it is not a production composition root.
+Dependency Injection makes these checks repeatable but does not verify real DNS,
+scanner networking, process startup or live recovery. See the
+[partial local-slice guide](../local-slice.md). No new design pattern is added.

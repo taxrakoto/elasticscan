@@ -822,3 +822,67 @@ counts. The normal suite explicitly skips that case without REAL_ZAP_RESULT_JSON
 Use the standard full regression command with PostgreSQL/LocalStack enabled;
 Keycloak remains separately opt-in. See the
 [Retrieval contract](../docs/retrieval-contract.md) for acceptance boundaries.
+
+
+## US-019.2: partial local integration slice
+
+`integration/test_local_slice.py` joins real production ASGI submission/retrieval,
+Keycloak authentication and team resolution, migrated temporary PostgreSQL
+storage, production publication to isolated LocalStack SNS/SQS, worker claims,
+outcome interpretation and guarded persistence. Scanner output/timeout and the
+orchestration joining the worker outcome to persistence are test-only.
+
+```sh
+python3 -B scripts/verify_local_slice.py
+```
+
+The helper requires the existing API image and healthy PostgreSQL, LocalStack
+and Keycloak. It runs six checks in a disposable source-mounted container. The
+checks cover two-team success and terminal replay, safe simulated timeout,
+rejected API requests without records, routing exclusion followed by accepted
+publication, injected publication failure/recovery and invalid worker deliveries.
+All four flags (`RUN_LOCAL_SLICE_TESTS`, `RUN_POSTGRES_TESTS`,
+`RUN_LOCALSTACK_TESTS`, `RUN_KEYCLOAK_TESTS`) must equal `1`; normal discovery
+skips the class otherwise. The dedicated module entry point rejects skipped
+runs and requires exactly six executed tests.
+
+Schemas/topics/queues use unique test prefixes and register cleanup on ordinary
+failures. No default queue is consumed, application schema migrated, target
+contacted or real scanner launched. No running service is rebuilt, recreated or
+repaired. Identity-provider login sessions are created by token acquisition.
+See the [partial local-slice guide](../docs/local-slice.md) for exact simulated
+boundaries and the remaining US-005, budget, audit, live-worker and AWS work.
+US-019.2 stays open; full AC-012/AC-022 acceptance is not claimed.
+
+
+On 2026-11-12, all six checks passed through the normal
+`scripts/verify_local_slice.py` entry point, using real Keycloak JWTs, migrated
+PostgreSQL schemas and isolated LocalStack resources. All four existing live
+Keycloak authentication/team/security checks also passed separately.
+
+The first live attempt failed before tests/migrations because Keycloak returned
+HTTP 500 with its existing H2 missing `OFFLINE_USER_SESSION` table fault. The
+user authorized finishing this task without further approval, including service
+repair. Recreating only Keycloak restored token acquisition, resetting its
+in-memory sessions, signing keys and nonpersisted console changes. Other running
+application services were not rebuilt/recreated; the private `.env` was unchanged.
+Before repair, a separate diagnostic run of all six flows passed with ephemeral
+RSA fixture tokens. That diagnostic was not counted as live Keycloak acceptance.
+
+PostgreSQL/LocalStack regression discovery ran 177 tests: 163 passed and 14 were
+explicitly skipped (four live Keycloak and six local-slice checks subsequently
+passed separately; two real-ZAP and two actual-scanner-result persistence/HTTP
+checks were not run). No real scanner was launched or target contacted. Both new
+Python files passed syntax checks; 58 local documentation links/anchors, six
+Markdown fence checks and Git whitespace checks passed. Cleanup verification
+confirmed no local-slice schemas, topics or queues remained. An initial read-only
+cleanup command used unsupported SDK context managers; its corrected command
+passed without changing task code.
+
+Existing migration `0001_create_transactional_job_storage.py` was applied only
+to disposable test schemas, which were removed afterward. No migration was
+created or applied to the application schema. The Adapter and Dependency
+Injection patterns were reused and documented. US-005 remains unchanged and
+US-019.2 stays open: real authorized scanning and deployed worker orchestration
+are still pending. The only scope extension was the user-authorized Keycloak
+repair; task code matched the displayed implementation preview.

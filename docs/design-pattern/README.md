@@ -38,3 +38,13 @@ document can then link to it. This catalog is not itself an approval log.
 
 Documentation references: [Microsoft's ADR guidance](https://learn.microsoft.com/en-us/azure/well-architected/architect-role/architecture-decision-record)
 and [AWS's transactional outbox guidance](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/transactional-outbox.html).
+
+
+## Partial local-slice verification
+
+US-019.2's [partial integration checks](../local-slice.md) reuse
+[Adapter](adapter.md#partial-local-integration-verification-us-0192) and
+[Dependency Injection](dependency-injection.md#partial-local-integration-verification-us-0192)
+to join production functions with real PostgreSQL, Keycloak and LocalStack and a
+simulated scanner. This is test-only composition; the deployed worker remains
+idle and full target-boundary and end-to-end acceptance remain pending.

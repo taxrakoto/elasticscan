@@ -132,3 +132,22 @@ have its own interpreter. The extra boundary requires tests with real ZAP report
 not only mocked adapters. Neither the wrapper nor the current worker handler
 persists outcomes. See [ZAP outcome rules](../scanner-outcomes.md) and
 [Value Object](value-object.md) for contracts, tradeoffs and verification.
+
+
+## Partial local integration verification (US-019.2)
+
+`tests/integration/test_local_slice.py` supplies a simulated scanner implementing
+the existing `run(request)` boundary. Fixed raw findings or an injected timeout
+pass through the production ZAP outcome interpreter. The test bridge observes
+committed running state before invoking that boundary, captures its normalized
+outcome, and test orchestration calls the existing guarded repository writer.
+The production handler still discards adapter output; neither a live consumer
+nor production outcome orchestration is added.
+
+This reuses Adapter to verify cooperation with real submission, publication,
+queue delivery, storage and retrieval, while keeping target connections absent.
+It cannot establish real ZAP execution or target containment. Terminal message
+replay verifies the existing claim guard prevents another invocation. No new
+pattern or scanner implementation is introduced. See the
+[partial local-slice guide](../local-slice.md) for interactions, six checks and
+remaining US-005/US-019.2 boundaries.

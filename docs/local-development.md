@@ -351,3 +351,21 @@ diagnostics before planning targeted recovery. No automatic reset or external
 alerting is provided. No worker/scanner execution is added.
 See [Job publication](job-publication.md) for the contract, operations, duplicate
 risk, limitations, and [tests](../tests/README.md#us-0061-versioned-publication-and-dispatcher).
+
+
+## Partial integration verification (US-019.2)
+
+With PostgreSQL, LocalStack and Keycloak healthy and the API image available:
+
+```sh
+python3 -B scripts/verify_local_slice.py
+```
+
+This opt-in check uses real migrations in temporary schemas, real Keycloak
+users/JWTs and isolated LocalStack resources, with a simulated scanner. It joins
+production functions using test orchestration and does not activate the deployed
+worker, launch ZAP or contact a target. The source is mounted read-only in a
+one-off container; running services and private configuration are unchanged.
+Keycloak failures are reported without automatic repair. US-005 remains unchanged
+and US-019.2 remains open. See the [partial local-slice guide](local-slice.md) for
+requirements, six checks, cleanup and acceptance boundaries.
