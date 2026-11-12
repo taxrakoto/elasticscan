@@ -2,8 +2,9 @@
 
 This reusable code distinguishes findings from failed execution. It does not
 persist terminal jobs or change the deployed idle worker. US-008.2 adds a separate
-[successful completion function](result-summaries.md) for counts; safe failed
-outcome persistence remains US-008.3. Live worker orchestration remains pending.
+[successful completion function](result-summaries.md) for counts; US-008.3 adds separate
+[safe failure persistence](safe-failures.md) functions. Live worker orchestration
+remains pending.
 
 ## Calling and shared contract
 
@@ -55,7 +56,9 @@ Each entry counts once per site; no cross-site deduplication is performed.
 Informational alerts are recognized but omitted from the published three-category
 summary. All returned counts are nonnegative integers; no findings is still success.
 
-Messages are fixed, safe strings. Raw exception text, reports and process logs
+Messages are fixed, safe strings. The US-008.3 persistence boundary reconstructs
+them from its approved code catalog instead of trusting a supplied outcome
+message. Raw exception text, reports and process logs
 are never included in the outcome. Unexpected programming exceptions propagate;
 this wrapper does not hide arbitrary bugs or catch database failures. The adapter
 still owns process-group and temporary-file cleanup, including when an exception

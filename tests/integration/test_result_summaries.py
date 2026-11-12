@@ -12,13 +12,18 @@ from alembic.config import Config
 from sqlalchemy import create_engine, func, select, text
 from sqlalchemy.exc import SQLAlchemyError
 
+from app.core.failure import safe_error
 from app.core.team import TeamContext
 from app.db.session import database_url, make_engine, make_session_factory
 from app.models import Job
 from app.repositories.jobs import find_team_job
-from app.repositories.lifecycle import claim_job, complete_job
-from app.scanners.base import ScannerOutput, SeverityCounts
-from app.scanners.zap_outcomes import normalize_zap_output
+from app.repositories.lifecycle import (
+    claim_job, complete_job, fail_exhausted_job, fail_job,
+)
+from app.scanners.base import (
+    ScanOutcome, ScanRequest, ScannerOutput, SeverityCounts,
+)
+from app.scanners.zap_outcomes import execute_zap_scan, normalize_zap_output
 
 
 @unittest.skipUnless(
@@ -260,3 +265,270 @@ class ResultSummaryTests(unittest.TestCase):
             job_id, token, SeverityCounts(**summary),
         ))
         self.assert_retrieved_after_replacement(job_id, summary)
+
+    def fail(self, job_id, token, outcome, worker='worker-a'):
+        with self.sessions.begin() as session:
+            return fail_job(
+                session,
+                job_id=job_id,
+                worker_id=worker,
+                claim_token=token,
+                outcome=outcome,
+            )
+
+    def test_scanner_failures_store_only_safe_errors(self):
+        secret = 'Traceback: Bearer secret-token password=secret'
+
+        class BrokenAdapter:
+            def __init__(self, exception):
+                self.exception = exception
+
+            def run(self, request):
+                raise self.exception
+
+        cases = (
+            (TimeoutError(secret), 'scanner_timeout'),
+            (OSError(secret), 'scanner_execution_failed'),
+            (UnicodeError(secret), 'scanner_output_invalid'),
+        )
+        for exception, code in cases:
+            with self.subTest(code=code):
+                job_id = self.create_job()
+                token = self.claim(job_id)
+                before = self.snapshot(job_id)
+                outcome = execute_zap_scan(
+                    BrokenAdapter(exception),
+                    ScanRequest(
+                        job_id=job_id,
+                        url='https://approved.example.invalid/',
+                        claim_token=token,
+                        scope_regex=r'^https://approved\.example\.invalid/',
+                    ),
+                )
+                self.assertTrue(self.fail(job_id, token, outcome))
+                stored = self.snapshot(job_id)
+                self.assertEqual(stored['status'], 'failed')
+                self.assertEqual(stored['error'], safe_error(code))
+                self.assertEqual(set(stored['error']), {'code', 'message'})
+                self.assertNotIn(secret, json.dumps(stored['error']))
+                self.assertIsNone(stored['result'])
+                self.assertIsNone(stored['claim_token'])
+                self.assertIsNone(stored['lease_expires_at'])
+                self.assertGreaterEqual(
+                    stored['finished_at'], stored['started_at'],
+                )
+                self.assertEqual(
+                    stored['finished_at'].utcoffset(), timedelta(0),
+                )
+                for field in (
+                    'job_id', 'team_id', 'created_by', 'scan_type',
+                    'parameters', 'created_at',
+                ):
+                    self.assertEqual(stored[field], before[field])
+
+                self.engine.dispose()
+                replacement = self.new_engine()
+                try:
+                    sessions = make_session_factory(replacement)
+                    with sessions() as session:
+                        job = find_team_job(
+                            session,
+                            job_id=job_id,
+                            context=TeamContext('team-alpha', 'peer'),
+                        )
+                        self.assertEqual(job.status, 'failed')
+                        self.assertEqual(job.error, safe_error(code))
+                        self.assertIsNone(job.result)
+                        self.assertIsNone(find_team_job(
+                            session,
+                            job_id=job_id,
+                            context=TeamContext('team-beta', 'bob'),
+                        ))
+                finally:
+                    replacement.dispose()
+
+    def test_failure_validation_and_message_reconstruction(self):
+        job_id = self.create_job()
+        token = self.claim(job_id)
+        before = self.snapshot(job_id)
+        invalid = (
+            None,
+            {},
+            ScanOutcome(counts=SeverityCounts()),
+            ScanOutcome(counts=None),
+            ScanOutcome(counts=None, error_code='secret-code'),
+            ScanOutcome(counts=None, error_code='dispatch_exhausted'),
+        )
+        for outcome in invalid:
+            with self.subTest(outcome=outcome):
+                with self.assertRaises(ValueError):
+                    self.fail(job_id, token, outcome)
+        for invalid_token in (None, 'invalid'):
+            with self.assertRaises(ValueError):
+                self.fail(
+                    job_id, invalid_token,
+                    ScanOutcome(None, 'scanner_timeout'),
+                )
+        self.assertEqual(self.snapshot(job_id), before)
+
+        for code in (
+            'scanner_timeout', 'scanner_execution_failed',
+            'scanner_output_invalid', 'scanner_execution_invalid',
+        ):
+            new_id = self.create_job()
+            new_token = self.claim(new_id)
+            self.assertTrue(self.fail(
+                new_id, new_token,
+                ScanOutcome(None, code, 'Traceback password=secret'),
+            ))
+            self.assertEqual(
+                self.snapshot(new_id)['error'], safe_error(code),
+            )
+
+    def test_failure_guards_and_terminal_immutability(self):
+        outcome = ScanOutcome(None, 'scanner_timeout')
+        job_id = self.create_job()
+        pending = self.snapshot(job_id)
+        self.assertFalse(self.fail(job_id, uuid4(), outcome))
+        self.assertEqual(self.snapshot(job_id), pending)
+        token = self.claim(job_id)
+        running = self.snapshot(job_id)
+        self.assertFalse(self.fail(
+            job_id, token, outcome, worker='worker-b',
+        ))
+        self.assertFalse(self.fail(job_id, uuid4(), outcome))
+        self.assertFalse(self.fail(uuid4(), token, outcome))
+        self.assertEqual(self.snapshot(job_id), running)
+        self.assertTrue(self.fail(job_id, token, outcome))
+        failed = self.snapshot(job_id)
+        self.assertFalse(self.fail(job_id, token, outcome))
+        self.assertFalse(self.complete(job_id, token, SeverityCounts()))
+        self.assertEqual(self.snapshot(job_id), failed)
+
+        completed_id = self.create_job()
+        completed_token = self.claim(completed_id)
+        self.assertTrue(self.complete(
+            completed_id, completed_token, SeverityCounts(),
+        ))
+        completed = self.snapshot(completed_id)
+        self.assertFalse(self.fail(
+            completed_id, completed_token, outcome,
+        ))
+        self.assertEqual(self.snapshot(completed_id), completed)
+
+        expired_id = self.create_job()
+        expired_token = self.claim(expired_id)
+        with self.sessions.begin() as session:
+            session.get(Job, expired_id).lease_expires_at = (
+                session.scalar(select(func.clock_timestamp()))
+                - timedelta(seconds=1)
+            )
+        expired = self.snapshot(expired_id)
+        self.assertFalse(self.fail(expired_id, expired_token, outcome))
+        self.assertEqual(self.snapshot(expired_id), expired)
+
+    def test_failure_rolls_back_as_one_outcome(self):
+        for pending in (False, True):
+            with self.subTest(pending=pending):
+                job_id = self.create_job()
+                token = None if pending else self.claim(job_id)
+                before = self.snapshot(job_id)
+                with self.assertRaises(SQLAlchemyError):
+                    with self.sessions.begin() as session:
+                        if pending:
+                            changed = fail_exhausted_job(
+                                session, job_id=job_id,
+                                code='dispatch_exhausted',
+                            )
+                        else:
+                            changed = fail_job(
+                                session,
+                                job_id=job_id,
+                                worker_id='worker-a',
+                                claim_token=token,
+                                outcome=ScanOutcome(None, 'scanner_timeout'),
+                            )
+                        self.assertTrue(changed)
+                        self.assertEqual(self.snapshot(job_id), before)
+                        session.execute(text('SELECT 1 / 0'))
+                self.assertEqual(self.snapshot(job_id), before)
+
+    def test_exhausted_failures_and_competing_execution(self):
+        for code in ('dispatch_exhausted', 'recovery_exhausted'):
+            job_id = self.create_job()
+            with self.sessions.begin() as session:
+                self.assertTrue(fail_exhausted_job(
+                    session, job_id=job_id, code=code,
+                ))
+            failed = self.snapshot(job_id)
+            self.assertEqual(failed['status'], 'failed')
+            self.assertEqual(failed['error'], safe_error(code))
+            self.assertIsNone(failed['result'])
+            self.assertIsNone(failed['started_at'])
+            self.assertIsNotNone(failed['finished_at'])
+            self.assertEqual(
+                failed['finished_at'].utcoffset(), timedelta(0),
+            )
+            with self.sessions.begin() as session:
+                self.assertFalse(fail_exhausted_job(
+                    session, job_id=job_id, code=code,
+                ))
+            self.assertEqual(self.snapshot(job_id), failed)
+
+        job_id = self.create_job()
+        before = self.snapshot(job_id)
+        for code in (None, {}, 'scanner_timeout', 'secret'):
+            with self.assertRaises(ValueError):
+                with self.sessions.begin() as session:
+                    fail_exhausted_job(session, job_id=job_id, code=code)
+        self.assertEqual(self.snapshot(job_id), before)
+        barrier = Barrier(2)
+
+        def claim():
+            barrier.wait(timeout=5)
+            return self.claim(job_id) is not None
+
+        def exhaust():
+            barrier.wait(timeout=5)
+            with self.sessions.begin() as session:
+                return fail_exhausted_job(
+                    session, job_id=job_id, code='dispatch_exhausted',
+                )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            first = executor.submit(claim)
+            second = executor.submit(exhaust)
+            results = [first.result(timeout=10), second.result(timeout=10)]
+        self.assertEqual(sorted(results), [False, True])
+        stored = self.snapshot(job_id)
+        self.assertEqual(
+            stored['status'], 'running' if results[0] else 'failed',
+        )
+
+    def test_completion_races_failure_without_mixed_fields(self):
+        job_id = self.create_job()
+        token = self.claim(job_id)
+        barrier = Barrier(2)
+
+        def finish(success):
+            barrier.wait(timeout=5)
+            if success:
+                return self.complete(job_id, token, SeverityCounts(high=2))
+            return self.fail(
+                job_id, token, ScanOutcome(None, 'scanner_timeout'),
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(finish, (True, False)))
+        self.assertEqual(sorted(results), [False, True])
+        stored = self.snapshot(job_id)
+        if results[0]:
+            self.assertEqual(stored['status'], 'completed')
+            self.assertEqual(
+                stored['result'], {'high': 2, 'medium': 0, 'low': 0},
+            )
+            self.assertIsNone(stored['error'])
+        else:
+            self.assertEqual(stored['status'], 'failed')
+            self.assertEqual(stored['error'], safe_error('scanner_timeout'))
+            self.assertIsNone(stored['result'])

@@ -164,3 +164,25 @@ or live worker orchestration is added. Disposable-schema tests verify rollback,
 visibility, replacement application connections, team-filtered retrieval, expiry
 and competing writers; a two-stage helper also verifies actual isolated ZAP
 counts. See [Atomic result summaries](../result-summaries.md).
+
+## Safe failure persistence (US-008.3)
+
+`app/repositories/lifecycle.py:fail_job` consumes the existing `ScanOutcome` value
+object, validates a scanner failure and UUID token, then delegates to the guarded
+`finish_job` update. `fail_exhausted_job` accepts only exhausted dispatch/recovery
+codes and delegates to `fail_pending_job`. `app/core/failure.py:safe_error` rebuilds
+a code/message object from a fixed catalog; supplied outcome messages are ignored.
+The caller supplies a short transaction and owns commit/rollback.
+
+Centralizing the safe boundary prevents raw exception/report data from becoming
+stored public-safe errors while reusing existing atomic owner/state/lease checks.
+The tradeoff is that callers must choose these functions: legacy dictionary-based
+helpers and privileged SQL/ORM paths retain their previous semantics. Pending
+exhaustion decisions remain trusted service inputs; no retry-policy enforcement,
+worker orchestration or HTTP serialization is introduced. Fixed-message mapping
+and input validation are techniques, not additional design patterns.
+
+The additions to `tests/integration/test_result_summaries.py` verify classified
+exceptions, message reconstruction, fresh-connection/team retrieval, null fields,
+UTC times, rollback, stale/duplicate protection and competing outcomes. See
+[Safe failures](../safe-failures.md) for interactions, examples and acceptance limits.

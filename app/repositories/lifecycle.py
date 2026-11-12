@@ -7,8 +7,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 
+from app.core.failure import (
+    EXHAUSTED_FAILURE_CODES, SCANNER_FAILURE_CODES, safe_error,
+)
 from app.models import Job
-from app.scanners.base import SeverityCounts
+from app.scanners.base import ScanOutcome, SeverityCounts
 
 
 def _validate_worker(worker_id: str) -> None:
@@ -259,3 +262,49 @@ def fail_pending_job(
         .execution_options(synchronize_session=False)
     )
     return session.scalar(statement) is not None
+
+
+def fail_job(
+    session: Session,
+    *,
+    job_id: UUID,
+    worker_id: str,
+    claim_token: UUID,
+    outcome: ScanOutcome,
+) -> bool:
+    """Save a normalized execution failure; caller owns commit/rollback."""
+    if not isinstance(claim_token, UUID):
+        raise ValueError('claim_token must be a UUID')
+    if (
+        not isinstance(outcome, ScanOutcome)
+        or outcome.counts is not None
+        or not isinstance(outcome.error_code, str)
+        or outcome.error_code not in SCANNER_FAILURE_CODES
+    ):
+        raise ValueError('A recognized scanner failure is required')
+
+    return finish_job(
+        session,
+        job_id=job_id,
+        worker_id=worker_id,
+        claim_token=claim_token,
+        status='failed',
+        result=None,
+        error=safe_error(outcome.error_code),
+    )
+
+
+def fail_exhausted_job(
+    session: Session,
+    *,
+    job_id: UUID,
+    code: str,
+) -> bool:
+    """Record a trusted service's exhausted pending-job decision."""
+    if not isinstance(code, str) or code not in EXHAUSTED_FAILURE_CODES:
+        raise ValueError('An exhausted dispatch/recovery code is required')
+    return fail_pending_job(
+        session,
+        job_id=job_id,
+        error=safe_error(code),
+    )

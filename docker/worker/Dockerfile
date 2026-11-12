@@ -21,7 +21,7 @@ COPY --chown=zap:zap \
     app/scanners/
 COPY --chown=zap:zap \
     app/core/__init__.py app/core/target_policy.py \
-    app/core/team.py app/core/auth.py \
+    app/core/team.py app/core/auth.py app/core/failure.py \
     app/core/
 COPY --chown=zap:zap \
     app/schemas/__init__.py app/schemas/submission.py \

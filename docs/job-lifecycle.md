@@ -33,8 +33,9 @@ These functions do not decide when attempts are exhausted.
 The legacy dictionary checks establish object shape only. US-008.2 adds
 `complete_job` for strict nonnegative integer counts from `SeverityCounts`,
 including required claim ownership. It reuses the same atomic update and caller
-transaction. US-007.3 supplies ZAP normalization; safe failed-outcome persistence
-remains US-008.3. See [Atomic result summaries](result-summaries.md). Do not pass
+transaction. US-007.3 supplies ZAP normalization; US-008.3 adds
+[safe failure persistence](safe-failures.md). See also
+[Atomic result summaries](result-summaries.md). Do not pass
 arbitrary exception details as production errors. Cancellation transitions and
 scanner termination remain US-011;
 the cancellation-request start guard is not a completed cancellation feature.
@@ -153,3 +154,19 @@ issuance; development sessions, signing keys, and unpersisted console changes
 were reset. The subsequent full run passed. Changed Python syntax, local
 documentation links, and whitespace checks passed. No permanent demonstration
 records were created and the running API image was not rebuilt or replaced.
+
+## Safe failure entry points (US-008.3)
+
+`fail_job(session, *, job_id, worker_id, claim_token, outcome)` validates a failed
+`ScanOutcome` and UUID token, rebuilds its error from the fixed catalog, and calls
+`finish_job`. It retains running-state, worker/token and unexpired-lease guards.
+`fail_exhausted_job(session, *, job_id, code)` accepts only exhausted dispatch or
+recovery codes and delegates to the pending-only transition. Both return whether
+an update matched; the caller still owns commit/rollback. Invalid inputs raise
+`ValueError`; database failures propagate.
+
+These are intended safe persistence boundaries. The earlier dictionary-based
+helpers retain compatibility and do not promise safe message semantics. Neither
+new function wires a live worker or determines retry exhaustion. See
+[Safe failures](safe-failures.md) for examples, exact messages, verification and
+remaining integration limits.

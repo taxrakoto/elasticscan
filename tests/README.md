@@ -754,3 +754,42 @@ imports/content checks without a source mount. Syntax for four Python files,
 shell/Compose configuration, 42 documentation links/anchors, fenced blocks and
 Git whitespace checks passed. Keycloak and running application containers were
 unchanged. No external target was scanned or material scope deviation introduced.
+
+## US-008.3: safe failure persistence
+
+The additions to `integration/test_result_summaries.py` persist controlled scanner
+exceptions through interpretation and safe failure recording. They verify fixed
+code/message objects, replacement of unsafe supplied messages, null unused fields,
+UTC/identity preservation, replacement connections, team isolation, validation,
+claim fencing, terminal immutability, statement-error rollback and competing
+failure/completion or exhaustion/claim transitions. No real scanner is launched.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.integration.test_result_summaries tests.integration.test_job_lifecycle tests.integration.test_execution_leases tests.integration.test_job_retrieval tests.unit.test_zap_outcomes -v
+docker compose build zap-worker
+docker run --rm --network none --entrypoint python3 elasticscan-zap-worker:local -B -c 'from app.repositories.lifecycle import fail_job, fail_exhausted_job; from app.core.failure import safe_error; assert safe_error("scanner_timeout")["code"] == "scanner_timeout"'
+```
+
+Use the US-006.3 PostgreSQL/LocalStack discovery command for regressions, with
+Keycloak disabled. PostgreSQL checks skip without opt-in; real-ZAP and actual-
+summary checks remain separately opt-in. Disposable schemas are removed after
+checks. Imports in the built image must work without a source mount. See
+[Safe failures](../docs/safe-failures.md) for scope and compatibility limits.
+
+Stored safe errors are verified; HTTP serialization and live-worker AC-005 remain
+pending. No running application container, private configuration, migration or
+dependency is changed by this story.
+
+On 2026-11-12, focused discovery passed 42 checks with the actual-scanner-summary
+check explicitly skipped (43 discovered). Full PostgreSQL/LocalStack discovery
+passed 154 checks with seven expected skips (161 discovered): four live Keycloak,
+two isolated real-ZAP and one actual-scanner-summary test. No real scanner was
+launched in this story; existing real-scanner cleanup tests were not rerun.
+The worker image built and passed failure-function imports and narrowed file
+inventory checks without a source mount. Three changed Python files passed syntax
+checks; 47 local documentation links/anchors, fenced blocks and Git whitespace
+checks passed. The diff matched the approved reusable-function scope. Keycloak
+and running application containers were unchanged.
+
+Result-summary, lifecycle and execution-lease disposable schemas were confirmed
+removed after verification.
