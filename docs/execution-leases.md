@@ -2,8 +2,9 @@
 
 These reusable database operations give one execution attempt temporary authority
 to process a saved job. The worker handler uses them before its adapter handoff;
-the deployed worker remains idle. There is no periodic renewal loop, SQS consumer,
-or real scanner integration yet.
+US-014.2 now composes them with periodic renewal, SQS delivery and real scanner
+execution in the worker source. Existing running containers are not replaced by
+source changes. See [Worker delivery](worker-delivery.md).
 
 ## Fields and callable contract
 
@@ -14,11 +15,12 @@ authority. Worker IDs must be nonempty, unpadded strings. Lease duration must be
 a positive integer number of seconds representable by Python's `timedelta` and
 the database date range. The default is a **provisional 60 seconds**, configurable
 through `lease_seconds` on `claim_job`, `renew_job`, and `handle_message`.
-No environment setting or service timer is introduced in this story.
+US-014.2 adds validated `WORKER_LEASE_SECONDS`, `WORKER_HEARTBEAT_SECONDS` and
+`WORKER_VISIBILITY_SECONDS` settings; the original callable defaults stay valid.
 
 | Operation | Guard and return | Changes |
 | --- | --- | --- |
-| `claim_job(session, *, job_id, worker_id, lease_seconds=60)` | Pending, no cancellation request or existing claim metadata; new UUID or `None` | Running, worker, fresh token, one additional attempt, start/heartbeat time, expiry |
+| `claim_job(session, *, job_id, worker_id, lease_seconds=60, max_attempts=None)` | Pending, no cancellation request or existing claim metadata, below optional attempt limit; new UUID or `None` | Running, worker, fresh token, one additional attempt, start/heartbeat time, expiry |
 | `renew_job(session, *, job_id, worker_id, claim_token, lease_seconds=60)` | Running, same worker and UUID token, strictly unexpired; Boolean | Heartbeat and expiry; never shortens an existing longer lease |
 | `finish_job(session, *, job_id, worker_id, status, result=None, error=None, claim_token=None)` | Running, same worker; leased jobs also require same token and strictly unexpired lease; Boolean | Outcome/status/time atomically; clears token and expiry, retains worker and last heartbeat |
 
@@ -44,7 +46,7 @@ with sessions.begin() as session:
 # Only a successful commit authorizes handoff. None means no claim.
 
 if token is not None:
-    # A future execution loop must call this periodically before expiry.
+    # The US-014.2 execution wrapper calls this periodically before expiry.
     with sessions.begin() as session:
         renewed = renew_job(
             session, job_id=job_id, worker_id=worker_id, claim_token=token,
@@ -88,20 +90,22 @@ techniques, not extra design patterns. Locks add round trips and can wait on
 competing transactions; callers must avoid long transactions and inconsistent
 multi-row lock ordering.
 
-An adapter failure after commit leaves running state with an expiring claim;
-there is no automatic retry, reclamation, completion or scanner termination here.
-The future execution loop must renew before expiry and stop scanner resources
-when ownership is lost. A database token cannot prevent an old process making
-network requests. Exactly-once physical scanning across crashes is not promised.
-Pending cancellation requests block claims; running cancellation, deletion
-tombstones and recovery coordination remain their respective stories.
+The raw handoff still propagates adapter exceptions. The US-014.2 execution
+wrapper now renews leases/visibility, interprets scanner output and commits guarded
+outcomes before acknowledgment. `ScanInterrupted` leaves recoverable state;
+the baseline adapter observes a stop event and kills its process group.
 
-This implements the concurrent-claim and late-writer protections in FR-020 and
-AC-006, with groundwork for FR-012/FR-019/FR-021/NFR-013/NFR-014 and AC-008.
-SQS visibility renewal and deletion after durable outcomes remain US-014.2;
-bounded abandoned-job detection/recovery and graceful shutdown remain US-014.3.
-Full AC-008 cannot pass until those integrations exist. Semantic scanner outcomes
-and safe public error formatting remain US-008.2/US-008.3.
+The partial US-014.3 recovery repository fails expired non-cancel-requested
+leased ZAP jobs as `recovery_exhausted`. It never reclaims or reruns them. The live
+worker passes `max_attempts=1`; callers omitting that new optional argument retain
+the original callable behavior. Row locks and fresh database time protect the
+transition, and stale completion writes cannot match after token removal.
+
+Physical exactly-once scanning is not promised. Cancel-requested jobs retain
+requests for the future cancellation implementation; missing jobs cannot be
+recreated from messages. Legacy unleased running jobs require operator action.
+US-014.3 remains partial pending US-017.1 and complete cancellation/deletion/crash
+acceptance. Existing database fields suffice; no migration is added.
 
 ## Verification
 
@@ -118,3 +122,15 @@ unchanged. No real scan, queue acknowledgment or deployed recovery is tested.
 See the [test guide](../tests/README.md#us-0141-execution-claims-and-leases) for
 commands and actual results. Tests remove their schemas and permanent application
 jobs are untouched. Source-mounted tests do not deploy the implementation.
+
+
+## Delivery integration verification
+
+`tests/integration/test_worker_delivery.py` adds real PostgreSQL/LocalStack checks
+for committed running state, repeated renewal, result/failure storage before
+acknowledgment, duplicate terminal delivery, transaction failure/redelivery,
+shutdown, renewal uncertainty, expired-claim failure, stale writers, preserved
+cancellation requests, competing consumers and queue-loop execution. Actual ZAP
+interruption/cleanup is verified separately in the isolated baseline fixture.
+See [Worker delivery](worker-delivery.md) and the
+[test guide](../tests/README.md#us-0142-delivery-and-us-0143-partial-recovery).

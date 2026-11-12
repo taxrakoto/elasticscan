@@ -50,9 +50,14 @@ def claim_job(
     job_id: UUID,
     worker_id: str,
     lease_seconds: int = 60,
+    max_attempts: int | None = None,
 ) -> UUID | None:
     """Claim only pending work; return a token, durable after caller commit."""
     _validate_worker(worker_id)
+    if max_attempts is not None and (
+        type(max_attempts) is not int or max_attempts <= 0
+    ):
+        raise ValueError('max_attempts must be a positive integer')
     duration = _lease_duration(lease_seconds)
     now = _locked_time(session, job_id)
     if now is None:
@@ -66,6 +71,10 @@ def claim_job(
             Job.cancellation_requested_at.is_(None),
             Job.claim_token.is_(None),
             Job.lease_expires_at.is_(None),
+            (
+                True if max_attempts is None
+                else Job.attempt_count < max_attempts
+            ),
         )
         .values(
             status='running',

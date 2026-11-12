@@ -4,6 +4,10 @@ from typing import Literal, Protocol
 from uuid import UUID
 
 
+class ScanInterrupted(Exception):
+    """Execution stopped because the worker cannot retain authority."""
+
+
 @dataclass(frozen=True)
 class ScanRequest:
     job_id: UUID

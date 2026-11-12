@@ -886,3 +886,75 @@ Injection patterns were reused and documented. US-005 remains unchanged and
 US-019.2 stays open: real authorized scanning and deployed worker orchestration
 are still pending. The only scope extension was the user-authorized Keycloak
 repair; task code matched the displayed implementation preview.
+
+
+## US-014.2: delivery and US-014.3: partial recovery
+
+`unit/test_worker_runtime.py` verifies timing validation, shared parsing,
+interruption propagation, unchanged legacy timeout waits and shutdown before
+polling. `integration/test_worker_delivery.py` uses disposable migrated PostgreSQL
+schemas and isolated LocalStack SNS/SQS resources. It exercises real visibility
+and lease renewal, durable completed/failed outcomes, terminal redelivery,
+persistence rollback with queue recovery, renewal uncertainty, cooperative
+shutdown, expired-claim failure, stale writers, cancellation-request preservation,
+competing consumers and the actual queue loop. Controlled scanner adapters contact
+no targets. The existing claim-concurrency tests remain part of verification.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_worker_runtime tests.unit.test_baseline tests.unit.test_zap_worker tests.integration.test_worker_delivery tests.integration.test_zap_worker tests.integration.test_execution_leases -v
+docker compose build zap-worker
+sh scripts/verify_zap_baseline.sh
+```
+
+Without both database/emulator flags the new integration class skips explicitly.
+Full discovery should enable PostgreSQL/LocalStack and separately opt in to live
+Keycloak/local-slice checks when healthy. The real-ZAP helper now has three tests:
+completion with findings, total timeout, and stop-event interruption. Its existing
+fixture verifies process groups and temporary directories are removed; it has no
+external network access. Worker packaging must import without a source mount,
+exclude API/dispatcher/tests/docs/migrations and run under the existing nonroot
+user. No application worker or queue is activated by these commands.
+
+Only existing migration 0001 is applied to temporary test schemas. Cleanup removes
+the test-delivery topics/queues and test_delivery schemas. US-014.3 remains partial
+and no budget/cancellation/deletion/AWS acceptance is inferred. See
+[Worker delivery](../docs/worker-delivery.md) for exact behavior and limitations.
+
+
+On 2026-11-12, 40 focused worker/baseline/claim/lease checks passed, including
+all eleven new delivery integration tests and five new runtime unit tests.
+The heartbeat test was then strengthened and passed separately with its scanner
+held beyond both original windows (three-second lease and six-second visibility),
+verifying continued ownership and hidden delivery after seven seconds.
+
+Regression discovery passed 186 checks with five expected skips (191 discovered).
+It included live Keycloak and the six existing authenticated local-slice checks.
+Three skipped real-ZAP checks passed separately in the network-disabled fixture:
+completion with actual findings, timeout and stop-event interruption, with
+process-group and temporary-directory cleanup. The two existing actual-scanner
+result persistence/HTTP checks were not rerun. Three additional delivery failure/
+guard checks were added after that discovery and passed in the 40-check focused
+run; no application implementation changed after the successful regression.
+
+The first full discovery encountered HTTP 500 in both Keycloak-dependent class
+setups. After explicit user approval, only Keycloak was recreated, restoring token
+acquisition and resetting its volatile sessions/signing keys/console changes.
+Other application containers were confirmed unchanged. The worker image built,
+passed imports/narrow inventory checks without a source mount, and passed an
+actual startup/PostgreSQL-timeout-options/cleanup smoke check with its queue loop
+replaced so application deliveries were not consumed. Compose validation passed.
+
+Eleven Python syntax checks, 85 local links/anchors, eight Markdown fence checks
+and Git whitespace checks passed. Cleanup verified removal of worker delivery,
+claim and lease schemas and delivery topics/queues. No migration, dependency or
+private `.env` change was made. Existing migration 0001 was used only in temporary
+test schemas. No worker was activated on application jobs or external target
+contacted. Verification added five integration scenarios within the approved
+files and strengthened the heartbeat assertion; the only operational scope
+extension was the separately approved Keycloak repair.
+
+The user accepted the scoped result on 2026-11-12. US-014.2 was marked Done and
+the session was recorded outside the application repository. US-014.3 remains
+partial, including conservative expired-claim failure rather than automatic
+scanner reexecution. US-017.1, US-005, full cancellation/deletion recovery and
+hard-crash acceptance remain pending.

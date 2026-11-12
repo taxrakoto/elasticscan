@@ -6,8 +6,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
+from threading import Event
 
-from app.scanners.base import ScanRequest, ScannerOutput
+from app.scanners.base import ScanInterrupted, ScanRequest, ScannerOutput
 
 
 def kill_group(process) -> None:
@@ -19,8 +21,28 @@ def kill_group(process) -> None:
     process.wait(timeout=5)
 
 
+def wait_for_process(process, timeout, stopped=None):
+    if stopped is None:
+        return process.wait(timeout=timeout)
+
+    deadline = time.monotonic() + timeout
+    while True:
+        if stopped.is_set():
+            raise ScanInterrupted('Scanner execution interrupted')
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise subprocess.TimeoutExpired(process.args, timeout)
+        try:
+            return process.wait(timeout=min(0.2, remaining))
+        except subprocess.TimeoutExpired:
+            continue
+
+
 class ZapBaselineAdapter:
-    def __init__(self, *, crawl_minutes=1, total_timeout_seconds=900):
+    def __init__(
+        self, *, crawl_minutes=1, total_timeout_seconds=900,
+        stop_event: Event | None = None,
+    ):
         for name, value in (
             ('crawl_minutes', crawl_minutes),
             ('total_timeout_seconds', total_timeout_seconds),
@@ -29,14 +51,16 @@ class ZapBaselineAdapter:
                 raise ValueError(f'{name} must be a positive integer')
         self.crawl_minutes = crawl_minutes
         self.total_timeout_seconds = total_timeout_seconds
+        self.stop_event = stop_event
 
     @classmethod
-    def from_environment(cls):
+    def from_environment(cls, *, stop_event=None):
         return cls(
             crawl_minutes=int(os.environ.get('ZAP_CRAWL_MINUTES', '1')),
             total_timeout_seconds=int(
                 os.environ.get('ZAP_TOTAL_TIMEOUT_SECONDS', '900')
             ),
+            stop_event=stop_event,
         )
 
     def run(self, request: ScanRequest) -> ScannerOutput:
@@ -84,8 +108,8 @@ class ZapBaselineAdapter:
                     start_new_session=True,
                 )
                 try:
-                    return_code = process.wait(
-                        timeout=self.total_timeout_seconds,
+                    return_code = wait_for_process(
+                        process, self.total_timeout_seconds, self.stop_event,
                     )
                 except subprocess.TimeoutExpired as exc:
                     raise TimeoutError('ZAP overall timeout exceeded') from exc

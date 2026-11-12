@@ -209,3 +209,26 @@ UTC/nullability, safe messages, invalid saved outcomes, guarded real persistence
 and two-team filtering. The real ZAP verification script supplies actual counts
 to the HTTP test. Cancellation remains fixture-only and live queue orchestration
 is pending. See [Lifecycle retrieval](../retrieval-contract.md).
+
+
+## Delivery attempt limits and conservative recovery (US-014.2 / partial US-014.3)
+
+`claim_job` accepts optional `max_attempts`; the live consumer supplies one while
+existing callers preserve the previous default. Its conditional update includes
+the attempt bound with pending/cancellation/claim guards, preventing a competing
+caller from bypassing that bound between observation and claim.
+
+`app/repositories/recovery.py:fail_expired_claims` selects at most ten leased,
+expired, running ZAP rows without cancellation requests, locks with `SKIP LOCKED`,
+and writes safe failure/status/time plus cleared authority in the caller's
+transaction. It preserves ownership and never reopens terminal jobs or recreates
+missing rows. A failed transaction rolls back the whole recovery decision.
+
+The consumer composes existing complete/fail functions and confirms a validated
+terminal outcome in a new session before acknowledgment. Repository and Adapter
+remain separate from SQS receipt handling. Conditional updates and row locks are
+coordination techniques, not extra patterns; privileged SQL can still bypass
+application rules. Integration checks cover rollback, stale writers, cancellation
+preservation, competition and queue redelivery. See
+[Worker delivery](../worker-delivery.md) for component interactions, tradeoffs and
+partial recovery/cancellation/deletion/budget acceptance boundaries.

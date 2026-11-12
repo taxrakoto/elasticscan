@@ -4,9 +4,10 @@
 US-007.1 adds reusable message validation and a committed adapter handoff.
 US-014.1 adds per-attempt claim tokens, renewable execution leases and guarded
 terminal writes requiring a current unexpired claim.
-The deployed worker is still an idle bootstrap process. Queue consumption,
-periodic renewal, recovery, scanner execution, and acknowledgment are
-not implemented yet. This is not a completed idempotent consumer.
+US-014.2 implements queue consumption, renewal, scanner/outcome composition and
+acknowledgment in source. The partial US-014.3 phase adds conservative expired-claim
+failure. Existing running workers keep their old image until recreated; full
+cancellation/deletion/recovery acceptance remains pending.
 
 ## Problem and application
 
@@ -20,7 +21,7 @@ outcome. For ElasticScan, the stable job ID connects messages to PostgreSQL job
 state. An SQS receipt handle identifies a particular delivery and is not a stable
 job identity.
 
-## Intended worker behavior
+## Worker delivery contract
 
 1. Validate the message version, scan type, and parameters against the stored job.
    Malformed or inconsistent messages must not start the scanner.
@@ -55,7 +56,7 @@ whose worker crashed before storing an outcome.
 
 ## Components and verification
 
-The intended implementation spans `app/workers/`, `app/repositories/`,
+The implementation spans `app/workers/`, `app/repositories/`,
 `app/messaging/`, and `app/scanners/`. These are responsibility boundaries,
 not evidence of completed feature logic.
 
@@ -86,10 +87,9 @@ These guards are application repository controls, not a database-wide transition
 trigger or proof of exactly-once physical execution. Privileged raw SQL/ORM
 writes can bypass transition predicates. Worker IDs identify the recorded
 execution owner. US-014.1 now adds per-execution tokens and renewable leases;
-running-job reclamation and bounded recovery remain US-014.3.
-Likewise, queue receipt handling, terminal confirmation before
-acknowledgment, and bounded recovery remain future work. Result-count validation
-and safe failure formatting remain US-008.2/US-008.3. See
+the partial US-014.3 phase fails expired claims without reclaiming them.
+US-014.2 now supplies receipt handling and terminal confirmation before
+acknowledgment. US-008.2/US-008.3 supply strict results and safe failures. See
 [Guarded job lifecycle](../job-lifecycle.md) for the callable contract and limits.
 
 ## Validated handoff (US-007.1)
@@ -101,10 +101,10 @@ adapter twice through this non-reclaiming handler. Missing or inconsistent jobs
 are preserved without invocation; pending cancellation requests block starts.
 Tests confirm terminal-state preservation and precommit failure exclusion.
 
-This remains a consumer foundation: no queue polling, receipt acknowledgment,
-terminal persistence orchestration, periodic renewal or concrete ZAP execution is
-wired in. An adapter exception after commit leaves running state and propagates; no automatic
-recovery or completion is inferred. See [Adapter](adapter.md) for decisions,
+The raw handoff remains a foundation without direct receipt handling. US-014.2
+composes it with polling, acknowledgment, terminal persistence, renewal and ZAP.
+Its raw adapter exceptions still propagate; the production execution wrapper and
+partial recovery repository provide the additional behavior described below. See [Adapter](adapter.md) for decisions,
 component interactions, tests and remaining acceptance boundaries.
 
 ## Leased claims (US-014.1)
@@ -119,7 +119,40 @@ and worker correlation. Expired claims cannot renew, finish or reclaim themselve
 Eight PostgreSQL tests verify claim/terminal competition, expiry, renewal,
 stale-token rejection, rollback and time checks; worker tests verify committed
 token handoff and duplicate-delivery exclusion. These support AC-006 and provide
-AC-008 groundwork. SQS acknowledgment/visibility and bounded crash recovery remain
-US-014.2/US-014.3. Tokens cannot stop stale scanner processes or guarantee exactly
+AC-008 groundwork. US-014.2 adds acknowledgment/visibility and the partial
+US-014.3 phase adds conservative expired-claim failure. Tokens cannot stop stale scanner processes or guarantee exactly
 one physical scan. See [Execution claims and leases](../execution-leases.md) for
 defaults, transaction requirements, tradeoffs and verification.
+
+
+## Production delivery composition (US-014.2)
+
+`app/workers/main.py` polls one delivery at a time with a unique process identity.
+`consumer.py` confirms saved message association and validates a terminal shape
+before deleting a terminal duplicate. Nonterminal messages go through the existing
+validated handoff and a one-attempt guarded claim. Its injected `Execution`
+adapter extends SQS visibility before committing database renewal, then runs the
+concrete adapter while a background heartbeat maintains authority. It interprets
+and commits results/failures before fresh terminal confirmation and deletion.
+
+A failed persistence transaction never deletes its receipt. A failed delete can
+cause a terminal duplicate, which is confirmed without scanner invocation. Renewal
+uncertainty or shutdown signals `ScanInterrupted` and leaves recovery state.
+Malformed/mismatched/missing-job deliveries are left to the existing retry/DLQ
+policy rather than acknowledged or used to reconstruct storage. Live competing
+claims cannot launch another scanner. No physical exactly-once promise is added.
+
+`app/repositories/recovery.py` locks up to ten expired leased ZAP jobs using
+`SKIP LOCKED`, records a canonical recovery failure and clears authority. This
+partial US-014.3 policy never automatically reruns an abandoned scan. Cancellation
+requests and missing rows prevent reexecution; cancellation finalization and
+retained deletion tombstones remain other stories. Privileged/manual recovery
+and database restoration require separate operational decisions.
+
+This reuses Idempotent Consumer with [Adapter](adapter.md) and
+[Repository](repository.md), not a new pattern. Coordination adds database and
+SQS traffic and dependency uncertainty can cause conservative failures. See
+[Worker delivery](../worker-delivery.md) for timers, interactions, verification,
+scaling, bounded-policy limits and pending acceptance. Earlier foundation sections
+above describe their original callable scope; this section supplies the current
+production composition.

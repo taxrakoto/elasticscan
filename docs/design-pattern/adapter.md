@@ -3,7 +3,8 @@
 **Status:** US-007.1 implements a reusable worker handoff boundary and tests it
 with a recording adapter. US-007.2 adds reusable bounded ZAP baseline execution;
 US-007.3 adds reusable ZAP outcome interpretation.
-The deployed worker remains an idle bootstrap process.
+US-014.2 adds a production execution wrapper and sequential queue process in
+source; running containers remain unchanged until recreated.
 
 ## Problem and components
 
@@ -21,7 +22,8 @@ US-007.2's `ZapBaselineAdapter` implements the actual process interface using th
 packaged baseline script. `ScannerOutput` retains raw exit code/report and scope,
 passive and active-scan evidence without interpreting findings as runtime failure.
 Hooks adapt the existing context setup to the packaged spider. The worker handler
-still discards the returned output; terminal persistence is not wired in.
+returns only `invoked`; US-014.2 supplies an `Execution` wrapper that interprets
+and persists outcomes before returning through that handoff.
 
 ## Interaction and decisions
 
@@ -55,8 +57,8 @@ receive an SQS receipt handle, poll a queue, delete messages, or persist termina
 results. Database and adapter exceptions propagate. A precommit failure prevents
 invocation; connection loss during commit can leave the saved start uncertain.
 An adapter failure or process crash after commit leaves the job running, with no
-automatic retry. US-014.1 adds renewable claim operations, but no periodic renewal
-loop or recovery. Bounded recovery must precede running-job reclamation. See
+automatic retry from this raw handoff. US-014.2 adds periodic renewal and the
+partial US-014.3 phase fails expired claims without running-job reclamation. See
 [Execution claims and leases](../execution-leases.md) for token-protected writes,
 expiry and ownership-loss handling. Passing the token does not itself stop a
 scanner process when authority expires.
@@ -151,3 +153,28 @@ replay verifies the existing claim guard prevents another invocation. No new
 pattern or scanner implementation is introduced. See the
 [partial local-slice guide](../local-slice.md) for interactions, six checks and
 remaining US-005/US-019.2 boundaries.
+
+
+## Production execution and interruption (US-014.2)
+
+`app/workers/consumer.py:Execution` implements the existing `run(request)` handoff
+contract while composing the real ZAP adapter, interpreter and repository writes.
+It receives queue receipts privately; `ScanRequest` and public API/message
+contracts are unchanged. Its initial pulse must commit authority before creating
+the scanner, and its heartbeat extends visibility before lease renewal.
+
+`ZapBaselineAdapter` accepts an optional stop event; callers without it preserve
+the previous wait behavior. With it, bounded waits check interruption every 0.2
+seconds. `ScanInterrupted` propagates through the outcome interpreter, invoking
+existing process-group and temporary-directory cleanup rather than storing a
+fabricated scanner failure. Shutdown and renewal uncertainty stop execution;
+a current claim still guards any result write. Generic injected adapters must
+honor their supplied stop event; the protocol alone cannot force cleanup.
+
+This is Adapter reuse, with extra lifecycle coordination and dependence on the
+pinned scanner runtime. New real-ZAP verification checks actual process/resource
+cleanup on interruption. PostgreSQL/LocalStack tests use a controlled adapter to
+prove delivery coordination, failures and competition. See
+[Worker delivery](../worker-delivery.md). The older US-019.2 test bridge remains
+test-only; this source now provides independent production composition. Full
+US-005 and US-017.1 acceptance is not implied.

@@ -8,6 +8,7 @@ import tempfile
 import subprocess
 import threading
 import time
+from threading import Event, Timer
 import unittest
 from unittest.mock import patch
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -16,7 +17,7 @@ from uuid import uuid4
 from pydantic import AnyHttpUrl
 
 from app.core.target_policy import TargetPolicy
-from app.scanners.base import ScanRequest
+from app.scanners.base import ScanInterrupted, ScanRequest
 from app.scanners.baseline import ZapBaselineAdapter
 from app.scanners.zap_outcomes import normalize_zap_output
 from app.scanners.scope import fixed_origin_scope
@@ -149,3 +150,18 @@ class RealBaselineTests(unittest.TestCase):
             self.run_adapter(ZapBaselineAdapter(
                 crawl_minutes=1, total_timeout_seconds=1,
             ))
+
+    def test_worker_interruption_stops_real_scanner_resources(self):
+        stopped = Event()
+        timer = Timer(1, stopped.set)
+        timer.start()
+        try:
+            with self.assertRaises(ScanInterrupted):
+                self.run_adapter(ZapBaselineAdapter(
+                    crawl_minutes=1,
+                    total_timeout_seconds=180,
+                    stop_event=stopped,
+                ))
+        finally:
+            timer.cancel()
+            timer.join()

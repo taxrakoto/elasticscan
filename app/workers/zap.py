@@ -24,6 +24,20 @@ WorkerDecision = Literal[
 ]
 
 
+def parse_message(body: str) -> JobMessage | None:
+    try:
+        payload = json.loads(body)
+        if (
+            not isinstance(payload, dict)
+            or type(payload.get('schema_version')) is not int
+            or payload['schema_version'] != 1
+        ):
+            return None
+        return JobMessage.model_validate(payload)
+    except (TypeError, ValueError, ValidationError):
+        return None
+
+
 def handle_message(
     body: str,
     *,
@@ -32,18 +46,11 @@ def handle_message(
     adapter: ScannerAdapter,
     lease_seconds: int = 60,
     policy: TargetPolicy | None = None,
+    max_attempts: int | None = None,
 ) -> WorkerDecision:
     """No queue acknowledgment or terminal outcome persistence is performed."""
-    try:
-        payload = json.loads(body)
-        if (
-            not isinstance(payload, dict)
-            or type(payload.get('schema_version')) is not int
-            or payload['schema_version'] != 1
-        ):
-            return 'invalid_message'
-        message = JobMessage.model_validate(payload)
-    except (TypeError, ValueError, ValidationError):
+    message = parse_message(body)
+    if message is None:
         return 'invalid_message'
 
     with sessions.begin() as session:
@@ -73,6 +80,7 @@ def handle_message(
             job_id=job.job_id,
             worker_id=worker_id,
             lease_seconds=lease_seconds,
+            max_attempts=max_attempts,
         )
         if token is None:
             return 'not_started'

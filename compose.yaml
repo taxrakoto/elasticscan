@@ -118,11 +118,13 @@ services:
     env_file: .env
     environment: *environment
     init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
     depends_on: *dependencies
     cpus: 1.0
     mem_limit: 2g
     healthcheck:
-      test: ["CMD", "test", "-f", "/tmp/bootstrap-ready"]
+      test: ["CMD", "test", "-f", "/tmp/worker-ready"]
       interval: 5s
       timeout: 5s
       retries: 10

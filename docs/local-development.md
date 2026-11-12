@@ -1,14 +1,15 @@
 # Local development (US-019.1)
 
-This is the bootstrap portion of Section 3.2 and AC-022 in the RAD. It provides
-PostgreSQL, FastAPI, Keycloak, SNS/SQS emulation, a dispatcher with bounded
-publication recovery, and an idle ZAP worker with the pinned scanner runtime. Production submission
-and team-scoped retrieval are implemented; scanner adapters remain future work.
-US-004.1 adds job/dispatch-intent tables and Alembic migrations; apply them explicitly as described in the
-[database migration guide](database-migrations.md). The worker explicitly logs
-its idle status and does not execute jobs.
-Dispatcher and worker health checks indicate process startup only. Apply
-migrations before enabling publication; see the dispatcher section below.
+The local setup provides PostgreSQL, FastAPI, Keycloak, SNS/SQS emulation, a
+bounded publication dispatcher and a sequential ZAP worker. Source now connects
+queue delivery, renewable execution, guarded outcomes and acknowledgment through
+US-014.2, with conservative expiry-to-failure recovery from the partial US-014.3
+phase. Existing running containers keep their old code until recreated.
+Apply [database migrations](database-migrations.md) before enabling dispatch or
+consumption. Process health checks indicate startup rather than dependency
+readiness or scan progress. Full US-005 network-boundary enforcement and complete
+US-017.1 execution-budget acceptance remain pending. See
+[Worker delivery](worker-delivery.md) for activation, scaling and limitations.
 
 ## Start and verify
 
@@ -18,7 +19,8 @@ ZAP image. Run these commands from `elasticscan/`:
 
 ```sh
 python3 scripts/setup_local.py
-docker compose up --build -d --wait --wait-timeout 240
+docker compose up --build -d --wait --wait-timeout 240 postgres localstack keycloak api
+docker compose exec -T api alembic upgrade head
 docker compose ps
 docker compose exec -T api python -m scripts.verify_local
 curl --fail http://localhost:8000/health/live
@@ -42,8 +44,8 @@ signing keys. Restart API validators or refresh their key caches after recreatio
 JWT validation through the application validator against the configured JWKS,
 audience/issuer rejection, three users' team claims, queue source policy and retry configuration, and delivery of
 `zap` messages while filtering another scan type. It deletes only its own marker
-messages. Run it against this bootstrap stack before implementing consumers;
-a future active worker could consume its messages. It refuses real AWS endpoints.
+messages. Run it with active worker consumers stopped;
+a consumer could otherwise receive its fixture messages. It refuses real AWS endpoints.
 It does not scan any target.
 
 ## Local messaging strategy
@@ -123,7 +125,8 @@ initial checks since US-003.2. The US-005.2 application phase also rechecks the
 target in the reusable worker handoff and generates an exact-origin ZAP scope.
 Multiple configured origins are now rejected; all paths in the single origin
 remain allowed. Worker callers must receive the same updated environment.
-Real ZAP crawling and AWS network enforcement remain pending. See
+Reusable real ZAP crawling is implemented and fixture-tested; complete
+redirect/DNS/egress enforcement and AWS deployment remain pending. See
 [Single fixed scanner origin](scanner-scope.md) for configuration and limits.
 
 The reusable [ZAP baseline adapter](zap-baseline.md) runs in the narrowed worker
@@ -131,8 +134,9 @@ image. Its provisional `ZAP_CRAWL_MINUTES=1` and
 `ZAP_TOTAL_TIMEOUT_SECONDS=900` defaults are independent. Build with
 `docker compose build zap-worker`; this does not replace the running idle worker.
 Use `sh scripts/verify_zap_baseline.sh` for isolated real-scanner tests, not a
-public website. Full SQS consumption, lease renewal during execution, normalized
-outcomes and durable completion remain later integrations. The image copies only
+public website. US-014.2 now connects SQS consumption, execution-lease renewal,
+normalized outcomes and durable completion in source; explicit recreation is
+required to activate the new worker. The image copies only
 the worker/scanner modules and their shared dependencies, not API routes or the
 dispatcher. The private `.env` is not edited by this task.
 
@@ -189,10 +193,11 @@ trusted token validation and the `require_identity` dependency using the OIDC
 settings above; see [Authentication](authentication.md) for behavior and tests.
 Production scan submission and retrieval require JWT validation and team-scoped
 authorization. US-006.1 replaces the idle dispatcher command with automatic
-publication; US-006.3 adds bounded retry and expired-claim recovery. US-007 will
-replace the idle worker command with actual execution. The worker
-image already contains `zap-baseline.py`, with CPU and memory limits in Compose.
-No scan execution or private-network target exception is enabled here.
+publication; US-006.3 adds bounded retry and expired-claim recovery. US-014.2
+replaces the worker image entry point with actual queue/execution composition.
+The image contains `zap-baseline.py`, with CPU and memory limits in Compose.
+Starting that rebuilt worker can execute authorized jobs; verification does not
+activate the running application worker. No private-network exception is added.
 
 For the eventual scanner extension point (AC-012), routes and client schemas stay
 independent of scanner commands; `app/scanners/` will hold adapters,
@@ -369,3 +374,31 @@ one-off container; running services and private configuration are unchanged.
 Keycloak failures are reported without automatic repair. US-005 remains unchanged
 and US-019.2 remains open. See the [partial local-slice guide](local-slice.md) for
 requirements, six checks, cleanup and acceptance boundaries.
+
+
+## Sequential workers and scaling (US-014.2 / partial US-014.3)
+
+The updated worker image entry point is `python3 -m app.workers.main`. After
+migrations and bootstrap verification, deliberately enable it against the
+configured queue/authorized origin:
+
+```sh
+docker compose build zap-worker
+docker compose up -d --no-deps --scale zap-worker=3 zap-worker
+docker compose stop zap-worker
+```
+
+Each replica has a unique identity and handles one scan at a time; guarded claims
+exclude competing execution of the same saved job. The provisional timing defaults
+are lease 60 seconds, heartbeat 15 seconds and SQS visibility 90 seconds, documented
+in `.env.example`. Existing private `.env` files need not be regenerated. CPU 1.0,
+memory 2 GB, crawl one minute and total runtime 900 seconds are unchanged.
+
+Renewal uncertainty and SIGTERM/SIGINT interrupt the scanner, leave the delivery
+undeleted and preserve its claim for recovery. Expired non-cancel-requested
+claims are failed safely rather than automatically rescanned. There is a
+30-second shutdown grace period and `unless-stopped` restart policy. Read
+[Worker delivery and conservative recovery](worker-delivery.md) before activation:
+US-005 remains incomplete, and cancellation/deletion/global budget acceptance are
+separate. Verification builds the image and runs isolated fixtures without
+replacing running application workers or consuming application queues.

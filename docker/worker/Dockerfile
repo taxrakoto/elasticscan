@@ -13,6 +13,7 @@ COPY --chown=zap:zap \
     app/
 COPY --chown=zap:zap \
     app/workers/__init__.py app/workers/zap.py \
+    app/workers/settings.py app/workers/consumer.py app/workers/main.py \
     app/workers/
 COPY --chown=zap:zap \
     app/scanners/__init__.py app/scanners/base.py \
@@ -25,7 +26,7 @@ COPY --chown=zap:zap \
     app/core/
 COPY --chown=zap:zap \
     app/schemas/__init__.py app/schemas/submission.py \
-    app/schemas/job_message.py \
+    app/schemas/job_message.py app/schemas/retrieval.py \
     app/schemas/
 COPY --chown=zap:zap \
     app/models/__init__.py app/models/job.py app/models/dispatch.py \
@@ -35,8 +36,8 @@ COPY --chown=zap:zap \
     app/db/
 COPY --chown=zap:zap \
     app/repositories/__init__.py app/repositories/lifecycle.py \
+    app/repositories/recovery.py \
     app/repositories/
 
-# Actual SQS consumption remains a later integration.
 USER zap
-ENTRYPOINT ["python3", "-m", "app.bootstrap", "--role", "worker"]
+ENTRYPOINT ["python3", "-m", "app.workers.main"]
