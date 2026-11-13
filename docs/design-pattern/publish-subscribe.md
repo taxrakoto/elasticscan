@@ -101,3 +101,27 @@ independent processes and scanner-specific routing; tradeoffs remain eventual
 and duplicate delivery, subscription maintenance, and separate acknowledgment
 versus execution. See [Job publication](../job-publication.md) for the message
 contract, test fixture, timeouts, and unimplemented retry/worker behavior.
+
+
+## Dead-letter routing and observation (US-015.2)
+
+`docker/localstack/provision.py` now reapplies managed queue attributes on each
+provisioning pass: bounded source redrive, a source-specific byQueue allow policy,
+four-day source retention and fourteen-day DLQ retention. The configured default
+is three source receives. The service performs redrive; the worker never manually
+forwards poison messages or invokes a scanner to diagnose them.
+
+`app/maintenance/dead_letters.py` is an explicitly invoked operator tool. It checks
+the source/DLQ relationship through queue attributes, samples one bounded batch
+and logs safe JSON fields. It has no database/scanner dependency, does not delete
+messages and does not redrive. Job IDs from malformed bodies are only untrusted
+correlation hints. Queue depth is approximate; sampling temporarily hides messages
+and can observe duplicates. Provisioning is repeatable but not atomic across
+service calls. LocalStack policy checks are not real-AWS IAM acceptance.
+
+This extends Publish–Subscribe's independent failure routing. Configuration,
+retention and observation are techniques, not additional design patterns. Tests
+cover repaired attributes and real LocalStack redrive through production worker
+validation, with no scanner calls and preserved job state. See
+[dead-letter delivery](../dead-letter-delivery.md) and the [test guide](../../tests/README.md).
+Full job reconciliation and controlled redrive remain US-015.3.

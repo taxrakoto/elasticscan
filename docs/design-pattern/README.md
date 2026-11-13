@@ -79,3 +79,12 @@ at receive, fresh terminal-read and acknowledgment boundaries. Retry/backoff are
 resilience techniques; scanner invocation and uncertain transaction commits are
 not repeated. See [worker retries](../worker-retries.md) for classification,
 configuration, supervision limits, diagnostics and verification.
+
+
+## Dead-letter routing and observation
+
+US-015.2 extends [Publish–Subscribe](publish-subscribe.md) with repeatable bounded
+redrive configuration and explicit operator DLQ sampling. Redrive/retention policies
+and safe diagnostic sampling are techniques, not new patterns. See
+[dead-letter delivery](../dead-letter-delivery.md) for interactions, tradeoffs,
+verification and remaining US-015.3 reconciliation/redrive acceptance.

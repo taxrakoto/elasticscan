@@ -111,3 +111,12 @@ whole network outage or launch a real scanner. See the [test guide](../tests/REA
 This implements the failure-classification and operation-retry part of FR-022.
 Full FR-023/AC-009 reconciliation and dead-letter observability remain subsequent
 stories; broader NFR-015 metrics and production runbooks are not claimed.
+
+
+## Queue-level failure routing (US-015.2)
+
+[Dead-letter delivery](dead-letter-delivery.md) adds configurable SQS source
+receive limits, repeatable queue-attribute repair and bounded DLQ observation.
+These delivery counts are separate from this document's per-operation retry
+budget and the job's one-scanner-attempt cap. Operator sampling keeps messages
+in the DLQ and does not perform reconciliation/redrive. US-015.3 remains separate.

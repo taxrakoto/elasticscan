@@ -22,6 +22,7 @@ from app.core.target_policy import TargetPolicy
 from app.core.team import TeamContext
 from app.db.session import database_url, make_engine, make_session_factory
 from app.models import Job
+from app.maintenance.dead_letters import observe_dead_letters
 from app.repositories.lifecycle import claim_job, complete_job
 from app.repositories.recovery import fail_expired_claims
 from app.scanners.base import ScanInterrupted, ScannerOutput, SeverityCounts
@@ -181,6 +182,7 @@ class WorkerDeliveryTests(unittest.TestCase):
                 MaxNumberOfMessages=1,
                 WaitTimeSeconds=1,
                 VisibilityTimeout=6,
+                MessageSystemAttributeNames=['ApproximateReceiveCount'],
             ).get('Messages', [])
             if messages:
                 self.assertEqual(messages[0]['Body'], body)
@@ -865,3 +867,67 @@ class WorkerDeliveryTests(unittest.TestCase):
             self.consume(self.publish(body), factory), 'terminal_confirmed',
         )
         factory.assert_not_called()
+
+    def test_poison_message_reaches_dlq_without_scanner_execution(self):
+        job_id, body = self.create()
+        payload = json.loads(body)
+        payload['schema_version'] = 99
+        body = json.dumps(payload)
+        delivery = self.publish(body)
+        factory = Mock()
+        tracked = Mock(wraps=self.sqs)
+        source = self.sqs.get_queue_attributes(
+            QueueUrl=self.resources['queue_url'],
+            AttributeNames=['RedrivePolicy'],
+        )['Attributes']
+        bound = int(json.loads(source['RedrivePolicy'])['maxReceiveCount'])
+        self.assertEqual(bound, 3)
+        for attempt in range(1, bound + 1):
+            self.assertEqual(
+                int(delivery['Attributes']['ApproximateReceiveCount']), attempt,
+            )
+            self.assertEqual(
+                self.consume(delivery, factory, sqs=tracked), 'invalid_message',
+            )
+            self.sqs.change_message_visibility(
+                QueueUrl=self.resources['queue_url'],
+                ReceiptHandle=delivery['ReceiptHandle'], VisibilityTimeout=0,
+            )
+            if attempt < bound:
+                deadline = time.monotonic() + 10
+                messages = []
+                while time.monotonic() < deadline and not messages:
+                    messages = self.sqs.receive_message(
+                        QueueUrl=self.resources['queue_url'],
+                        MaxNumberOfMessages=1, WaitTimeSeconds=1,
+                        MessageSystemAttributeNames=['ApproximateReceiveCount'],
+                    ).get('Messages', [])
+                self.assertTrue(messages)
+                delivery = messages[0]
+
+        self.assertEqual(
+            self.sqs.receive_message(
+                QueueUrl=self.resources['queue_url'], WaitTimeSeconds=1,
+            ).get('Messages', []), [],
+        )
+        deadline = time.monotonic() + 10
+        observations = []
+        with self.assertLogs('app.maintenance.dead_letters', level='INFO') as logs:
+            while time.monotonic() < deadline and not observations:
+                observations = observe_dead_letters(
+                    self.sqs, source_queue_url=self.resources['queue_url'],
+                    dlq_url=self.resources['dlq_url'], limit=1,
+                )
+                if not observations:
+                    time.sleep(0.1)
+        self.assertTrue(observations)
+        self.assertEqual(observations[0]['job_id'], str(job_id))
+        self.assertFalse(observations[0]['schema_valid'])
+        self.assertIn(str(job_id), '\n'.join(logs.output))
+        self.assertNotIn('approved.example.invalid', '\n'.join(logs.output))
+        factory.assert_not_called()
+        tracked.delete_message.assert_not_called()
+        with self.sessions() as session:
+            job = session.get(Job, job_id)
+            self.assertEqual(job.status, 'pending')
+            self.assertEqual(job.attempt_count, 0)

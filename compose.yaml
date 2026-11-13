@@ -47,6 +47,7 @@ services:
       AWS_SECRET_ACCESS_KEY: test
       SQS_ENDPOINT_STRATEGY: path
       LOCALSTACK_HOST: localstack:4566
+      SQS_MAX_RECEIVE_COUNT: ${SQS_MAX_RECEIVE_COUNT:-3}
     ports: ["127.0.0.1:4566:4566"]
     volumes:
       - ./docker/localstack/init.sh:/etc/localstack/init/ready.d/init.sh:ro

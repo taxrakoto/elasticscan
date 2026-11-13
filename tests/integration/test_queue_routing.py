@@ -205,5 +205,44 @@ class QueueRoutingTests(unittest.TestCase):
         self.assertEqual(set(received), set(accepted))
 
 
+    def test_reprovisioning_repairs_redrive_and_retention(self):
+        self.sqs.set_queue_attributes(
+            QueueUrl=self.resources['queue_url'],
+            Attributes={
+                'RedrivePolicy': json.dumps({
+                    'deadLetterTargetArn': self.resources['dlq_arn'],
+                    'maxReceiveCount': '1',
+                }),
+                'MessageRetentionPeriod': '3600',
+            },
+        )
+        self.sqs.set_queue_attributes(
+            QueueUrl=self.resources['dlq_url'],
+            Attributes={
+                'MessageRetentionPeriod': '3600',
+                'RedriveAllowPolicy': json.dumps({'redrivePermission': 'allowAll'}),
+            },
+        )
+        repeated = provision(
+            self.sns, self.sqs, **self.names, max_receive_count=5,
+        )
+        self.assertEqual(repeated, self.resources)
+        source = self.sqs.get_queue_attributes(
+            QueueUrl=repeated['queue_url'], AttributeNames=['All'],
+        )['Attributes']
+        target = self.sqs.get_queue_attributes(
+            QueueUrl=repeated['dlq_url'], AttributeNames=['All'],
+        )['Attributes']
+        self.assertEqual(
+            int(json.loads(source['RedrivePolicy'])['maxReceiveCount']), 5,
+        )
+        self.assertEqual(source['MessageRetentionPeriod'], '345600')
+        self.assertEqual(target['MessageRetentionPeriod'], '1209600')
+        self.assertEqual(json.loads(target['RedriveAllowPolicy']), {
+            'redrivePermission': 'byQueue',
+            'sourceQueueArns': [repeated['queue_arn']],
+        })
+
+
 if __name__ == '__main__':
     unittest.main()

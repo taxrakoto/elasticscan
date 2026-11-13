@@ -172,3 +172,13 @@ The existing Compose restart policy can start a new process and operation budget
 Claims, scanner execution, outcome writes and renewal uncertainty retain their
 conservative behavior. One scanner attempt, per-operation retries and SQS delivery
 counts are separate bounds. No queue redrive policy or public error contract changes.
+
+
+## Dead-letter delivery observation (US-015.2)
+
+[Dead-letter delivery](dead-letter-delivery.md) configures repeatable source/DLQ
+redrive and retention with a default three-receive bound. An explicit operator
+command samples up to ten DLQ messages, emits safe job-ID hints and leaves
+messages undeleted with 30-second temporary invisibility. Poison-message tests
+verify redrive without scanner invocation or job-state changes. This does not
+finalize jobs or redrive messages; reconciliation remains US-015.3.

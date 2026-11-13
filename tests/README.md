@@ -1066,3 +1066,58 @@ schemas or delivery queues/topics remained; all six existing service container
 IDs were unchanged. No failed checks or material deviations from the approved
 preview remained. The accepted session entry and backlog status were updated outside this
 repository after user acceptance. No commit has been created for this story.
+
+
+## US-015.2: dead-letter configuration and safe observation
+
+[Dead-letter delivery](../docs/dead-letter-delivery.md) documents configurable
+source redrive, repaired queue attributes, retention and the bounded operator
+command. It distinguishes job/scanner attempts from infrastructure retries and
+source/DLQ receive counts. Observation temporarily hides samples for 30 seconds;
+it does not delete, redrive, scan or edit database jobs.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_dead_letters tests.integration.test_queue_routing tests.integration.test_worker_delivery -v
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -e RUN_KEYCLOAK_TESTS=0 -e RUN_LOCAL_SLICE_TESTS=0 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
+docker compose build api
+docker run --rm --network none --entrypoint python elasticscan-api:local -B -m app.maintenance.dead_letters --help
+```
+
+Tests use unique LocalStack topics/queues and disposable migrated PostgreSQL
+schemas. The poison-message test publishes a correlated unsupported schema,
+receives it three times through production consumer validation, verifies each
+receive count, and observes service redrive to the DLQ. Safe logs include the job
+ID hint, scanner construction never occurs, and the job remains pending with zero
+attempts. The queue-repair test alters delivery count/retention/allow policy and
+reprovisions with a five-receive bound, checking stable resource identity and
+restored attributes. Existing subscription/routing checks remain unchanged.
+
+Unit tests verify safe diagnostic fields, valid and malformed bodies, observation
+limits, wrong/malformed queue policies, nondeletion/nonredrive, provisioning
+validation and CLI client cleanup/exit codes. The command does not assert database
+ownership or complete reconciliation; US-015.3 retains those requirements.
+
+On 2026-11-13, all 29 initial focused checks passed. Three additional unit checks
+for malformed allow policy and CLI paths then passed in full regression discovery:
+223 discovered, 208 passed, 15 skipped. Skips were four live Keycloak, six
+local-slice, three real-ZAP and two actual-scanner-result persistence/HTTP checks.
+These unaffected opt-in suites were not rerun; scanner/authentication code was
+unchanged. No failed checks remained. The source-ARN-list validation correction
+and additional unit checks stayed within the approved files and behavior.
+
+No application queue was consumed or reprovisioned. The shared-queue bootstrap
+verification was not run; its configurable-bound expression is covered by syntax
+review. Default-queue setup is applied only when deliberately reprovisioned by an
+operator. Running services and private configuration remain unchanged. The user accepted
+the result on 2026-11-13 and authorized session recording and marking US-015.2
+Done. Commit approval remains separate.
+
+Final API-image rebuild and network-none checks passed: the packaged CLI help,
+maintenance imports/safe parsing, nonroot execution and absence of consumer-module
+imports worked without source mounts. Compose validated delivery-bound wiring
+for defaults and a five-receive override without displaying private configuration.
+Six changed/new Python files passed syntax checks; six Markdown documents passed
+fence checks, 69 local link targets resolved, and Git whitespace/final-diff checks
+passed. Cleanup confirmed removal of delivery schemas and delivery/routing queues
+and topics. All six existing application-service container IDs were unchanged.
+No live queue attributes were applied and no external target was scanned.

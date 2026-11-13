@@ -67,7 +67,9 @@ def verify_messaging():
     assert policy['Action'] == 'sqs:SendMessage'
     assert policy['Resource'] == attrs['QueueArn']
     assert policy['Condition']['ArnEquals']['aws:SourceArn'] == topic
-    assert int(json.loads(attrs['RedrivePolicy'])['maxReceiveCount']) == 3
+    assert int(json.loads(attrs['RedrivePolicy'])['maxReceiveCount']) == int(
+        os.environ.get('SQS_MAX_RECEIVE_COUNT', '3')
+    )
     subscriptions = sns.list_subscriptions_by_topic(TopicArn=topic)['Subscriptions']
     matching = [s for s in subscriptions if s['Endpoint'] == attrs['QueueArn']]
     assert len(matching) == 1, 'Provisioning must not duplicate subscriptions'

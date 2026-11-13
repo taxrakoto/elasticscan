@@ -12,16 +12,39 @@ def provision(
     topic_name='elasticscan-jobs',
     queue_name='elasticscan-zap',
     dlq_name='elasticscan-zap-dlq',
+    max_receive_count=3,
 ):
+    if type(max_receive_count) is not int or not 1 <= max_receive_count <= 100:
+        raise ValueError('Delivery bound must be between 1 and 100')
+    if queue_name == dlq_name:
+        raise ValueError('Source and dead-letter queues must differ')
     topic = sns.create_topic(Name=topic_name)['TopicArn']
     dlq = sqs.create_queue(QueueName=dlq_name)['QueueUrl']
     dlq_arn = sqs.get_queue_attributes(QueueUrl=dlq, AttributeNames=['QueueArn'])['Attributes']['QueueArn']
-    queue = sqs.create_queue(QueueName=queue_name, Attributes={
-        'VisibilityTimeout': '60',
-        'ReceiveMessageWaitTimeSeconds': '10',
-        'RedrivePolicy': json.dumps({'deadLetterTargetArn': dlq_arn, 'maxReceiveCount': '3'}),
-    })['QueueUrl']
+    queue = sqs.create_queue(QueueName=queue_name)['QueueUrl']
     queue_arn = sqs.get_queue_attributes(QueueUrl=queue, AttributeNames=['QueueArn'])['Attributes']['QueueArn']
+    sqs.set_queue_attributes(
+        QueueUrl=dlq,
+        Attributes={
+            'MessageRetentionPeriod': '1209600',
+            'RedriveAllowPolicy': json.dumps({
+                'redrivePermission': 'byQueue',
+                'sourceQueueArns': [queue_arn],
+            }),
+        },
+    )
+    sqs.set_queue_attributes(
+        QueueUrl=queue,
+        Attributes={
+            'VisibilityTimeout': '60',
+            'ReceiveMessageWaitTimeSeconds': '10',
+            'MessageRetentionPeriod': '345600',
+            'RedrivePolicy': json.dumps({
+                'deadLetterTargetArn': dlq_arn,
+                'maxReceiveCount': str(max_receive_count),
+            }),
+        },
+    )
     policy = {'Version': '2012-10-17', 'Statement': [{
         'Effect': 'Allow', 'Principal': {'Service': 'sns.amazonaws.com'},
         'Action': 'sqs:SendMessage', 'Resource': queue_arn,
@@ -77,4 +100,8 @@ def provision(
 if __name__ == '__main__':
     config = {'endpoint_url': 'http://localhost:4566',
               'region_name': os.environ.get('AWS_DEFAULT_REGION', 'us-east-1')}
-    provision(boto3.client('sns', **config), boto3.client('sqs', **config))
+    provision(
+        boto3.client('sns', **config),
+        boto3.client('sqs', **config),
+        max_receive_count=int(os.environ.get('SQS_MAX_RECEIVE_COUNT', '3')),
+    )
