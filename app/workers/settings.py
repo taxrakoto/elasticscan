@@ -8,8 +8,20 @@ class WorkerSettings:
     lease_seconds: int = 60
     heartbeat_seconds: int = 15
     visibility_seconds: int = 90
+    recovery_interval_seconds: int = 5
+    recovery_batch_size: int = 10
 
     def __post_init__(self):
+        if (
+            type(self.recovery_interval_seconds) is not int
+            or not 1 <= self.recovery_interval_seconds <= 300
+        ):
+            raise ValueError('Recovery interval must be between 1 and 300 seconds')
+        if (
+            type(self.recovery_batch_size) is not int
+            or not 1 <= self.recovery_batch_size <= 100
+        ):
+            raise ValueError('Recovery batch size must be between 1 and 100')
         values = (
             self.lease_seconds,
             self.heartbeat_seconds,
@@ -39,5 +51,11 @@ class WorkerSettings:
             )),
             visibility_seconds=int(os.environ.get(
                 'WORKER_VISIBILITY_SECONDS', '90'
+            )),
+            recovery_interval_seconds=int(os.environ.get(
+                'WORKER_RECOVERY_INTERVAL_SECONDS', '5'
+            )),
+            recovery_batch_size=int(os.environ.get(
+                'WORKER_RECOVERY_BATCH_SIZE', '10'
             )),
         )

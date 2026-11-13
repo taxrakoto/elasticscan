@@ -4,6 +4,8 @@ set -eu
 cd "$(dirname "$0")/.."
 
 docker run --rm --init --network none \
+  --cpus "${WORKER_CPUS:-1.0}" \
+  --memory "${WORKER_MEMORY_LIMIT:-2g}" \
   --cap-add NET_ADMIN --user root \
   --mount "type=bind,src=$PWD,dst=/workspace,readonly" \
   --workdir /workspace \

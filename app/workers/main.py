@@ -4,7 +4,7 @@ import os
 import signal
 import socket
 from pathlib import Path
-from threading import Event
+from threading import Event, Thread
 from uuid import uuid4
 
 import boto3
@@ -16,9 +16,9 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from app.core.target_policy import get_target_policy
 from app.db.session import database_url, make_session_factory
-from app.repositories.recovery import fail_expired_claims
 from app.scanners.baseline import ZapBaselineAdapter
 from app.workers.consumer import consume_one
+from app.workers.recovery import recovery_loop
 from app.workers.settings import WorkerSettings
 
 
@@ -26,17 +26,12 @@ logger = logging.getLogger(__name__)
 READY_FILE = Path('/tmp/worker-ready')
 
 
-def run(
+def consume_loop(
     sessions, *, sqs, queue_url, worker_id,
     settings, stopped, adapter_factory, policy=None,
 ):
     while not stopped.is_set():
         try:
-            with sessions.begin() as session:
-                recovered = fail_expired_claims(session)
-            for job_id in recovered:
-                logger.warning('worker_recovery_failed job_id=%s', job_id)
-
             if stopped.is_set():
                 break
             deliveries = sqs.receive_message(
@@ -66,6 +61,42 @@ def run(
         ):
             logger.error('worker_dependency_or_storage_unavailable')
             stopped.wait(2)
+
+
+def run(
+    sessions, *, sqs, queue_url, worker_id,
+    settings, stopped, adapter_factory, policy=None,
+):
+    if stopped.is_set():
+        return
+
+    recovery = Thread(
+        target=recovery_loop,
+        kwargs={
+            'sessions': sessions,
+            'settings': settings,
+            'stopped': stopped,
+        },
+        name='execution-recovery',
+        daemon=True,
+    )
+    recovery.start()
+    try:
+        consume_loop(
+            sessions,
+            sqs=sqs,
+            queue_url=queue_url,
+            worker_id=worker_id,
+            settings=settings,
+            stopped=stopped,
+            adapter_factory=adapter_factory,
+            policy=policy,
+        )
+    finally:
+        stopped.set()
+        recovery.join(timeout=10)
+        if recovery.is_alive():
+            logger.warning('worker_recovery_shutdown_pending')
 
 
 def main():

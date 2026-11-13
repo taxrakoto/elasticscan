@@ -1,11 +1,12 @@
 """Real storage/queue checks for delivery coordination and recovery."""
 import json
+import multiprocessing
 import os
 import time
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
-from threading import Event
+from threading import Event, Thread
 from unittest.mock import Mock, patch
 from uuid import uuid4
 
@@ -28,7 +29,9 @@ from app.schemas import ZapSubmission
 from app.services.acceptance import accept_scan
 from app.workers.consumer import consume_one
 from app.workers.main import run
+from app.workers.recovery import recover_once, recovery_loop
 from app.workers.settings import WorkerSettings
+from app.workers.zap import handle_message
 from docker.localstack.provision import provision
 
 
@@ -36,6 +39,36 @@ ENABLED = all(
     os.environ.get(name) == '1'
     for name in ('RUN_POSTGRES_TESTS', 'RUN_LOCALSTACK_TESTS')
 )
+
+
+def abandoned_worker(schema, body, ready):
+    """Child process with a real committed claim and simulated scanner."""
+    engine = create_engine(database_url(), connect_args={
+        'options': f'-c search_path={schema} -c timezone=UTC',
+    })
+    sessions = make_session_factory(engine)
+
+    class WaitingScanner:
+        def run(self, request):
+            ready.send(str(request.claim_token))
+            Event().wait(60)
+
+    try:
+        handle_message(
+            body,
+            sessions=sessions,
+            worker_id='crash-fixture',
+            adapter=WaitingScanner(),
+            lease_seconds=3,
+            max_attempts=1,
+            policy=TargetPolicy(
+                ['https://approved.example.invalid'],
+                resolver=lambda *_: ('8.8.8.8',),
+            ),
+        )
+    finally:
+        ready.close()
+        engine.dispose()
 
 
 @unittest.skipUnless(ENABLED, 'Enable PostgreSQL and LocalStack tests')
@@ -569,3 +602,178 @@ class WorkerDeliveryTests(unittest.TestCase):
             self.assertIsNone(session.get(Job, missing))
             self.assertEqual(session.get(Job, cancelled).status, 'pending')
             self.assertEqual(session.get(Job, job_id).status, 'completed')
+
+    def test_hard_crash_recovers_after_real_lease_expiry(self):
+        job_id, body = self.create()
+        context = multiprocessing.get_context('spawn')
+        receiver, sender = context.Pipe(duplex=False)
+        self.addCleanup(receiver.close)
+        process = context.Process(
+            target=abandoned_worker,
+            args=(self.schema, body, sender),
+        )
+        process.start()
+        sender.close()
+        try:
+            self.assertTrue(receiver.poll(15), 'Child did not claim the job')
+            receiver.recv()
+            process.kill()
+            process.join(timeout=5)
+            self.assertFalse(process.is_alive())
+
+            deadline = time.monotonic() + 10
+            recovered = []
+            while time.monotonic() < deadline and not recovered:
+                recovered = recover_once(self.sessions, settings=self.settings)
+                if not recovered:
+                    time.sleep(0.1)
+            self.assertEqual(recovered, [job_id])
+
+            with self.sessions() as session:
+                job = session.get(Job, job_id)
+                self.assertEqual(job.status, 'failed')
+                self.assertEqual(job.error['code'], 'recovery_exhausted')
+                self.assertEqual(job.attempt_count, 1)
+                self.assertEqual(job.team_id, 'team-alpha')
+                self.assertIsNone(job.result)
+                self.assertIsNone(job.claim_token)
+                self.assertIsNotNone(job.finished_at)
+
+            factory = Mock()
+            self.assertEqual(
+                self.consume(
+                    {'Body': body, 'ReceiptHandle': 'fixture'},
+                    factory, sqs=Mock(),
+                ),
+                'terminal_confirmed',
+            )
+            factory.assert_not_called()
+        finally:
+            if process.is_alive():
+                process.kill()
+            process.join(timeout=5)
+
+    def test_recovery_batch_limit_and_repeat_are_safe(self):
+        jobs = [self.create()[0] for _ in range(3)]
+        with self.sessions.begin() as session:
+            for job_id in jobs:
+                claim_job(
+                    session, job_id=job_id,
+                    worker_id='abandoned', lease_seconds=3,
+                )
+        for job_id in jobs:
+            self.expire(job_id)
+
+        settings = WorkerSettings(recovery_batch_size=1)
+        recovered = []
+        for _ in jobs:
+            batch = recover_once(self.sessions, settings=settings)
+            self.assertEqual(len(batch), 1)
+            recovered.extend(batch)
+        self.assertEqual(set(recovered), set(jobs))
+        self.assertEqual(recover_once(self.sessions, settings=settings), [])
+
+    def test_competing_recovery_passes_resolve_each_job_once(self):
+        jobs = [self.create()[0] for _ in range(3)]
+        with self.sessions.begin() as session:
+            for job_id in jobs:
+                claim_job(
+                    session, job_id=job_id,
+                    worker_id='abandoned', lease_seconds=3,
+                )
+        for job_id in jobs:
+            self.expire(job_id)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(
+                    recover_once, self.sessions, settings=self.settings,
+                )
+                for _ in range(2)
+            ]
+            recovered = [
+                job_id
+                for future in futures
+                for job_id in future.result(timeout=10)
+            ]
+        self.assertEqual(len(recovered), len(set(recovered)))
+        self.assertEqual(set(recovered), set(jobs))
+
+    def test_recovery_continues_while_another_scanner_is_busy(self):
+        abandoned, _ = self.create()
+        with self.sessions.begin() as session:
+            claim_job(
+                session, job_id=abandoned, worker_id='old', lease_seconds=3,
+            )
+        self.expire(abandoned)
+
+        active, body = self.create()
+        delivery = self.publish(body)
+        entered = Event()
+        release = Event()
+        stopped = Event()
+        settings = WorkerSettings(
+            lease_seconds=3, heartbeat_seconds=1, visibility_seconds=6,
+            recovery_interval_seconds=1,
+        )
+        adapter = Mock()
+
+        def scan(request):
+            entered.set()
+            if not release.wait(15):
+                raise RuntimeError('Scanner fixture was not released')
+            return self.output()
+
+        adapter.run.side_effect = scan
+        recovery = Thread(
+            target=recovery_loop,
+            kwargs={
+                'sessions': self.sessions, 'settings': settings,
+                'stopped': stopped,
+            },
+        )
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.consume, delivery, lambda _: adapter)
+            try:
+                self.assertTrue(entered.wait(5))
+                recovery.start()
+                deadline = time.monotonic() + 5
+                recovered = False
+                while time.monotonic() < deadline:
+                    with self.sessions() as session:
+                        recovered = session.get(Job, abandoned).status == 'failed'
+                        active_status = session.get(Job, active).status
+                    if recovered:
+                        break
+                    time.sleep(0.1)
+                self.assertTrue(recovered)
+                self.assertEqual(active_status, 'running')
+            finally:
+                release.set()
+                stopped.set()
+                if recovery.ident is not None:
+                    recovery.join(timeout=10)
+            self.assertEqual(future.result(timeout=10), 'processed')
+        self.assertFalse(recovery.is_alive())
+
+    def test_recovery_transaction_failure_rolls_back(self):
+        job_id, _ = self.create()
+        with self.sessions.begin() as session:
+            claim_job(session, job_id=job_id, worker_id='old', lease_seconds=3)
+        self.expire(job_id)
+
+        def fail_after_update(session, **kwargs):
+            fail_expired_claims(session, **kwargs)
+            raise OperationalError('fixture', {}, Exception('fixture'))
+
+        with patch(
+            'app.workers.recovery.fail_expired_claims',
+            side_effect=fail_after_update,
+        ):
+            with self.assertRaises(OperationalError):
+                recover_once(self.sessions, settings=self.settings)
+        with self.sessions() as session:
+            self.assertEqual(session.get(Job, job_id).status, 'running')
+        self.assertEqual(
+            recover_once(self.sessions, settings=self.settings), [job_id],
+        )

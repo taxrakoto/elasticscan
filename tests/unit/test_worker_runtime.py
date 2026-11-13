@@ -1,18 +1,74 @@
 """Worker configuration and interruption checks without external services."""
+import os
 import subprocess
 import unittest
 from threading import Event
-from unittest.mock import Mock
+from unittest.mock import Mock, call, patch
+
+from sqlalchemy.exc import OperationalError
 
 from app.scanners.base import ScanInterrupted
-from app.scanners.baseline import wait_for_process
+from app.scanners.baseline import ZapBaselineAdapter, wait_for_process
 from app.scanners.zap_outcomes import execute_zap_scan
 from app.workers.main import run
+from app.workers.recovery import recovery_loop
 from app.workers.settings import WorkerSettings
 from app.workers.zap import parse_message
 
 
 class WorkerRuntimeTests(unittest.TestCase):
+    def test_provisional_total_runtime_default_and_override(self):
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                ZapBaselineAdapter.from_environment().total_timeout_seconds,
+                900,
+            )
+        with patch.dict(os.environ, {'ZAP_TOTAL_TIMEOUT_SECONDS': '2'}):
+            self.assertEqual(
+                ZapBaselineAdapter.from_environment().total_timeout_seconds,
+                2,
+            )
+
+    def test_recovery_configuration_and_environment(self):
+        for changes in (
+            {'recovery_interval_seconds': 0},
+            {'recovery_interval_seconds': True},
+            {'recovery_interval_seconds': 301},
+            {'recovery_batch_size': 0},
+            {'recovery_batch_size': True},
+            {'recovery_batch_size': 101},
+        ):
+            with self.subTest(changes=changes):
+                with self.assertRaises(ValueError):
+                    WorkerSettings(**changes)
+
+        with patch.dict(os.environ, {
+            'WORKER_LEASE_SECONDS': '60',
+            'WORKER_HEARTBEAT_SECONDS': '15',
+            'WORKER_VISIBILITY_SECONDS': '90',
+            'WORKER_RECOVERY_INTERVAL_SECONDS': '2',
+            'WORKER_RECOVERY_BATCH_SIZE': '3',
+        }):
+            settings = WorkerSettings.from_environment()
+        self.assertEqual(settings.recovery_interval_seconds, 2)
+        self.assertEqual(settings.recovery_batch_size, 3)
+
+    def test_recovery_survives_storage_failure_and_stops(self):
+        stopped = Mock()
+        stopped.is_set.return_value = False
+        stopped.wait.side_effect = [False, True]
+        settings = WorkerSettings(recovery_interval_seconds=2)
+
+        with patch('app.workers.recovery.recover_once') as recover:
+            recover.side_effect = [
+                OperationalError('fixture', {}, Exception('private detail')),
+                [],
+            ]
+            recovery_loop(Mock(), settings=settings, stopped=stopped)
+
+        self.assertEqual(recover.call_count, 2)
+        self.assertEqual(stopped.wait.call_args_list, [call(2), call(2)])
+
     def test_timing_configuration_rejects_unsafe_combinations(self):
         self.assertEqual(WorkerSettings().visibility_seconds, 90)
         for changes in (

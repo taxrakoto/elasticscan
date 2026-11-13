@@ -232,3 +232,32 @@ application rules. Integration checks cover rollback, stale writers, cancellatio
 preservation, competition and queue redelivery. See
 [Worker delivery](../worker-delivery.md) for component interactions, tradeoffs and
 partial recovery/cancellation/deletion/budget acceptance boundaries.
+
+
+## Independent recovery and execution budgets (US-014.3 / US-017.1)
+
+The current source supersedes the earlier partial recovery descriptions above.
+`app/workers/main.py:run` owns an independent recovery thread, which uses separate
+sessions through `app/workers/recovery.py:recover_once`. The recovery repository
+locks a configurable batch, rechecks database time and writes canonical failures;
+the caller commits before logging job IDs. Concurrent passes skip locked rows.
+Only expired leased ZAP jobs without cancellation requests qualify. Terminal
+outcomes and absent records are preserved; no scanner is invoked or retried.
+The one-attempt policy, claim tokens and terminal guards prevent logical duplicate
+execution and stale outcome overwrites. External physical activity after a crash
+is uncertain; no exactly-once physical execution guarantee follows.
+
+This reuses Repository to keep transaction decisions separate from scheduling,
+and Idempotent Consumer to preserve durable outcomes on redelivery. Threads,
+leases and row locks are techniques, not new patterns. Independent scheduling
+avoids waiting for a busy scanner, at the cost of another thread, session and
+periodic database work. Dependencies, backlog and contention can delay recovery;
+shutdown joins for up to ten seconds before allowing process exit.
+
+Real PostgreSQL/LocalStack checks exercise process killing after durable claim,
+natural expiry, batching, competing passes, rollback, busy-scanner independence,
+stale writers, cancellation metadata and missing jobs. Scanner adapters in those
+checks are simulated. Real ZAP cleanup is verified separately under provisional
+resource limits. Full cancellation/deletion APIs and API load benchmarking remain
+other stories. See [execution budgets](../execution-budgets.md),
+[worker delivery](../worker-delivery.md) and the [test guide](../../tests/README.md).

@@ -958,3 +958,60 @@ the session was recorded outside the application repository. US-014.3 remains
 partial, including conservative expired-claim failure rather than automatic
 scanner reexecution. US-017.1, US-005, full cancellation/deletion recovery and
 hard-crash acceptance remain pending.
+
+
+## US-014.3 recovery and US-017.1 execution budgets
+
+The recovery scheduler runs independently of an active scanner. Its interval and
+batch size are validated configuration; the conservative execution-attempt cap
+remains one. See [execution budgets](../docs/execution-budgets.md) for provisional
+capacity settings, timeout semantics, shutdown and dependency/backlog limits.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_worker_runtime tests.unit.test_baseline tests.unit.test_zap_worker tests.integration.test_worker_delivery tests.integration.test_zap_worker tests.integration.test_execution_leases -v
+docker compose build zap-worker
+sh scripts/verify_zap_baseline.sh
+```
+
+The new process-kill test starts a separate Python worker handoff, waits for its
+real PostgreSQL claim to commit, kills that process and waits for natural lease
+expiry. Its scanner is simulated: no external target or real ZAP process runs in
+that test. Further checks cover recovery batching, repeat/competition safety,
+rollback and recovery while another scanner is busy. Existing checks retain
+shutdown, cancellation-request preservation, missing records, stale writers,
+acknowledgment ordering and permanent-error coverage. Unit tests verify the
+provisional 900-second timeout default and environment override, recovery
+configuration and recovery-loop storage failure/shutdown behavior.
+
+The real-ZAP helper applies CPU/memory limits to its network-none fixture and
+checks process-group and temporary-directory cleanup on completion, shortened
+timeout and interruption. Shortened timeout testing plus default configuration
+checks do not represent a literal fifteen-minute run. Full cancellation/deletion
+APIs, tombstones, AWS acceptance and the US-017.3 API benchmark are separate.
+
+On 2026-11-13, the focused suite passed 47 checks. One additional timeout-default/
+override unit test then passed in full PostgreSQL/LocalStack regression discovery:
+202 tests discovered, 187 passed, 15 skipped. Skips were four live Keycloak and six
+local-slice checks (unaffected opt-in suites not run), three real-ZAP checks
+subsequently passed separately, and two actual-scanner-result persistence/HTTP
+checks not rerun. All three isolated real-ZAP checks passed under provisional
+resource limits, including real findings and cleanup. No failed checks remained.
+
+The worker image built and a disposable Compose run, without a source mount,
+verified imports of the recovery scheduler/main/settings/adapter, the nonroot
+user, narrowed inventory, and actual cgroup limits of 1 CPU and 2 GiB. Compose
+configuration checks passed for defaults and overrides (0.5 CPU, 1 GiB, two
+replicas), without displaying resolved private configuration. No application
+container was replaced or worker activated on application jobs. No private `.env`,
+dependency or migration was changed. Existing migrations were applied only to
+disposable schemas. Source changes remain subject to result acceptance.
+
+
+Final static checks passed for five changed/new Python files, shell syntax,
+seven Markdown documents with balanced fences, 79 local documentation link
+targets and Git whitespace. Cleanup checks confirmed no delivery/execution/worker
+schemas or delivery queues/topics remained. All six existing service container
+IDs remained unchanged. No material behavior, interface or scope deviation from
+the preview occurred; timeout-default/override coverage was added within the
+approved runtime test file. The user accepted this result on 2026-11-13 and authorized session recording
+and marking US-014.3 and US-017.1 Done. Commit approval remains separate.

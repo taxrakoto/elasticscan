@@ -121,8 +121,10 @@ services:
     restart: unless-stopped
     stop_grace_period: 30s
     depends_on: *dependencies
-    cpus: 1.0
-    mem_limit: 2g
+    cpus: ${WORKER_CPUS:-1.0}
+    mem_limit: ${WORKER_MEMORY_LIMIT:-2g}
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
     healthcheck:
       test: ["CMD", "test", "-f", "/tmp/worker-ready"]
       interval: 5s

@@ -95,7 +95,7 @@ wrapper now renews leases/visibility, interprets scanner output and commits guar
 outcomes before acknowledgment. `ScanInterrupted` leaves recoverable state;
 the baseline adapter observes a stop event and kills its process group.
 
-The partial US-014.3 recovery repository fails expired non-cancel-requested
+The US-014.3 conservative recovery repository fails expired non-cancel-requested
 leased ZAP jobs as `recovery_exhausted`. It never reclaims or reruns them. The live
 worker passes `max_attempts=1`; callers omitting that new optional argument retain
 the original callable behavior. Row locks and fresh database time protect the
@@ -104,8 +104,11 @@ transition, and stale completion writes cannot match after token removal.
 Physical exactly-once scanning is not promised. Cancel-requested jobs retain
 requests for the future cancellation implementation; missing jobs cannot be
 recreated from messages. Legacy unleased running jobs require operator action.
-US-014.3 remains partial pending US-017.1 and complete cancellation/deletion/crash
-acceptance. Existing database fields suffice; no migration is added.
+US-014.3 now schedules configurable recovery independently of active scans and
+verifies hard process interruption after a committed claim and natural expiry.
+[Execution budgets](execution-budgets.md) cover US-017.1. Current cancellation
+metadata and absent-record guards are preserved; full cancellation/deletion APIs
+remain later stories. Existing fields suffice; no migration is added.
 
 ## Verification
 
@@ -134,3 +137,15 @@ cancellation requests, competing consumers and queue-loop execution. Actual ZAP
 interruption/cleanup is verified separately in the isolated baseline fixture.
 See [Worker delivery](worker-delivery.md) and the
 [test guide](../tests/README.md#us-0142-delivery-and-us-0143-partial-recovery).
+
+## Independent conservative recovery
+
+`app/workers/recovery.py` commits at most the configured batch size per pass,
+logs committed job IDs and retries storage failures after an interruptible
+interval. The main worker owns thread startup/shutdown. A healthy available
+worker resolves expired claims even while its consumer scans a different job.
+One automatic execution attempt is the fixed cap; there is no automatic rescan.
+A hard crash can leave physical scanner activity uncertain, so exactly-once
+physical execution is not promised. Recovery fences old writers without
+claiming external process termination. See [worker delivery](worker-delivery.md)
+and [execution budgets](execution-budgets.md) for outage and backlog limits.

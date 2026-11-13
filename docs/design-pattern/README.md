@@ -8,8 +8,8 @@ that a pattern's application behavior has been implemented.
 | Pattern | Application | Current status |
 | --- | --- | --- |
 | [Publish–Subscribe](publish-subscribe.md) | SNS subscriptions route scan messages to scanner-specific SQS queues | Local infrastructure implemented; US-006.2 adds isolated routing/configuration and reprovisioning tests; US-006.1 adds versioned publication and first-attempt dispatch; US-014.2 adds sequential worker consumption in source |
-| [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Atomic acceptance in US-004.2; versioned publication in US-006.1; bounded retries, jittered backoff and expired-claim recovery in US-006.3; partial US-014.3 adds conservative expired-execution failure |
-| [Idempotent Consumer](idempotent-consumer.md) | Handle repeated queue deliveries through durable worker claims and terminal-state protection | US-008.1 guards, US-007.1 validation/handoff and US-014.1 renewable claim operations implemented; US-014.2 adds polling, renewal, execution/outcome composition and acknowledgment; partial US-014.3 adds expiry-to-failure recovery; complete cancellation/deletion acceptance pending |
+| [Transactional Outbox](transactional-outbox.md) | Commit jobs and publication intent together, then publish through the dispatcher | Atomic acceptance in US-004.2; versioned publication in US-006.1; bounded retries, jittered backoff and expired-claim recovery in US-006.3; US-014.3 adds independently scheduled conservative expired-execution failure |
+| [Idempotent Consumer](idempotent-consumer.md) | Handle repeated queue deliveries through durable worker claims and terminal-state protection | US-008.1 guards, US-007.1 validation/handoff and US-014.1 renewable claim operations implemented; US-014.2 adds polling, renewal, execution/outcome composition and acknowledgment; US-014.3 adds independent expiry-to-failure recovery; full cancellation/deletion APIs remain later stories |
 | [Adapter](adapter.md) | Separate scanner-specific execution from worker validation and database claims | US-007.1 handoff, US-005.2 context setup and US-007.2 reusable bounded baseline execution; US-007.3 reusable ZAP outcome interpretation; US-014.2 adds live queue wiring and stop-event cleanup; full target-boundary acceptance pending |
 | [Dependency Injection](dependency-injection.md) | FastAPI and internal callers supply verified context, policy, storage and scanner clients | Submission/retrieval implemented; US-005.2 application phase injects worker policy and scanner context client for isolated checks |
 | [Value Object](value-object.md) | Immutable authorized context and acceptance snapshot | `TeamContext` implemented in US-002.1/US-002.2; `AcceptedScan` added in US-004.2; shared `SeverityCounts`/`ScanOutcome` added in US-007.3 |
@@ -54,7 +54,19 @@ idle and full target-boundary and end-to-end acceptance remain pending.
 
 [Worker delivery](../worker-delivery.md) documents the US-014.2 composition of
 [Idempotent Consumer](idempotent-consumer.md), [Adapter](adapter.md) and
-[Repository](repository.md), plus the conservative partial US-014.3 recovery
+[Repository](repository.md), plus the conservative US-014.3 recovery
 policy. Existing running containers are unchanged until explicitly recreated.
-Heartbeat/stop-event/locking mechanisms are coordination techniques. Full
-US-017.1, cancellation/deletion and target-boundary acceptance remain pending.
+Heartbeat/stop-event/locking mechanisms are coordination techniques. US-017.1 budgets are documented below; full cancellation/deletion APIs,
+load benchmarking and target-boundary acceptance remain separate.
+
+
+## Independent recovery and execution budgets
+
+US-014.3 extends [Repository](repository.md) and
+[Idempotent Consumer](idempotent-consumer.md) with independent recovery scheduling,
+configurable batch/interval and one automatic execution attempt followed by safe
+failure. This supersedes the earlier partial recovery status above. US-017.1
+exposes provisional Compose concurrency/CPU/memory budgets; runtime timeout and
+cleanup reuse the existing adapter. See [execution budgets](../execution-budgets.md).
+Full cancellation/deletion APIs, tombstones and US-017.3 load acceptance remain
+separate; present recovery preserves cancellation metadata and absent records.

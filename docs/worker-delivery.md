@@ -2,8 +2,9 @@
 
 US-014.2 connects SQS delivery, the existing validated worker handoff, bounded ZAP
 execution, outcome interpretation, guarded persistence and acknowledgment.
-US-014.3 adds a partial conservative recovery phase. US-017.1 and US-005 remain
-unchanged. Updated source/images do not replace already running containers.
+US-014.3 adds independent conservative recovery; US-017.1 adds configurable
+[execution budgets](execution-budgets.md). US-005 remains unchanged. Updated
+source/images do not replace already running containers.
 
 ## Components and delivery flow
 
@@ -11,8 +12,9 @@ unchanged. Updated source/images do not replace already running containers.
 a hostname/UUID worker ID. Multiple containers can share the ZAP queue; database
 claims serialize competing starts for the same job. There is no global scan cap.
 
-1. Before polling, commit at most ten expired-claim failures through
-   `app/repositories/recovery.py:fail_expired_claims`.
+1. Start independent background recovery through `app/workers/recovery.py`.
+   Each pass commits a configurable batch through
+   `app/repositories/recovery.py:fail_expired_claims`; scanning does not block it.
 2. Receive at most one delivery with a ten-second long poll and the configured
    visibility timeout. Stop signals prevent subsequent claims/polls.
 3. `consumer.py:consume_one` parses the shared message and checks stored scan
@@ -51,10 +53,12 @@ use defaults; `.env.example` documents them. The private `.env` is not rewritten
 SQS visibility is extended first so it covers the subsequently renewed lease.
 The worker uses bounded SDK retries/timeouts, PostgreSQL connection/statement/
 lock timeouts and Linux TCP failure detection. These help dependency failure and
-shutdown handling; they do not prove real-AWS timing or complete US-017.1.
+shutdown handling; they do not prove real-AWS timing or API benchmark acceptance.
 
 Existing `ZAP_CRAWL_MINUTES=1`, `ZAP_TOTAL_TIMEOUT_SECONDS=900`, CPU 1.0 and memory
-2 GB remain provisional settings. They are not newly accepted execution budgets.
+2 GiB remain provisional settings. Compose now exposes CPU, memory and replica
+settings.
+See [execution budgets](execution-budgets.md) for enforcement and verification.
 
 ## Interruption and recovery policy
 
@@ -72,10 +76,10 @@ token/expiry, preserves ownership and diagnostic metadata, and never reopens
 terminal state. Row locks use `SKIP LOCKED`, allowing concurrent recovery passes
 without waiting on another worker's claimed rows. Callers own commit/rollback.
 
-Recovery runs before polling, not in a separate maintenance service. With an
-idle healthy consumer and a small backlog it follows lease expiry on the next
-poll/recovery pass. Busy workers, a large recovery backlog or dependency outages
-can delay reconciliation; no fixed end-to-end recovery SLA is claimed. A hard
+Recovery runs in a separate thread, with separate sessions, even during an active
+scan. Passes default to ten jobs followed by a five-second interruptible wait.
+A large backlog, row contention or dependency/worker outages can delay
+reconciliation; no fixed end-to-end recovery SLA during outages is claimed. A hard
 crash cannot run local cleanup. Restored workers can fail its expired claim,
 while old writers are fenced by token/expiry. Physical exactly-once scanning is
 not promised; database commit cannot atomically control external scanner work.
@@ -148,7 +152,11 @@ interruption as well as completion and timeout. See the
 [test guide](../tests/README.md#us-0142-delivery-and-us-0143-partial-recovery).
 
 US-014.2 supports FR-019/FR-021 and AC-006/AC-008's delivery/storage behavior.
-US-014.3 remains partial: US-017.1 verification, cancellation/deletion lifecycle
-integration, and full crash/reexecution acceptance are not complete. No global
-concurrency limiter, new migration, API endpoint, automatic scanner retry or AWS
-deployment is introduced.
+The US-014.3 conservative policy is one automatic attempt followed by failure
+after abandonment. Additional tests kill a worker process after a committed claim
+and wait for natural expiry; they also cover bounded batches, competing recovery,
+rollback and recovery while another scanner is busy. Full cancellation/deletion
+APIs and retained tombstones remain later stories: current checks preserve
+requests and never recreate missing rows. US-017.3 retains benchmark acceptance.
+No global concurrency limiter, migration, API endpoint, automatic scanner retry
+or AWS deployment is introduced.
