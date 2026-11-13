@@ -160,3 +160,15 @@ APIs and retained tombstones remain later stories: current checks preserve
 requests and never recreate missing rows. US-017.3 retains benchmark acceptance.
 No global concurrency limiter, migration, API endpoint, automatic scanner retry
 or AWS deployment is introduced.
+
+
+## Bounded infrastructure operations (US-015.1)
+
+[Worker retries](worker-retries.md) adds failure classification and bounded retry
+for receive, fresh terminal confirmation and acknowledgment. Defaults are three
+total calls with two/four-second waits. Known permanent errors stop immediately;
+consumer dependency exhaustion returns rather than repeating the old fixed wait.
+The existing Compose restart policy can start a new process and operation budget.
+Claims, scanner execution, outcome writes and renewal uncertainty retain their
+conservative behavior. One scanner attempt, per-operation retries and SQS delivery
+counts are separate bounds. No queue redrive policy or public error contract changes.

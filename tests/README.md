@@ -1015,3 +1015,54 @@ IDs remained unchanged. No material behavior, interface or scope deviation from
 the preview occurred; timeout-default/override coverage was added within the
 approved runtime test file. The user accepted this result on 2026-11-13 and authorized session recording
 and marking US-014.3 and US-017.1 Done. Commit approval remains separate.
+
+
+## US-015.1: worker failure classification and bounded retries
+
+[Worker retries](../docs/worker-retries.md) defines the transient allowlist,
+configuration, repeatable boundaries and distinction between operation attempts,
+scanner attempts and queue delivery counts. The implementation wraps only
+receive, fresh terminal confirmation and acknowledgment. It never retries the
+scanner, claim/outcome transactions or uncertain renewal authority.
+
+```sh
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest tests.unit.test_worker_retry tests.unit.test_worker_runtime tests.unit.test_zap_outcomes tests.integration.test_worker_delivery tests.integration.test_execution_leases -v
+docker compose run --rm --no-deps -e RUN_POSTGRES_TESTS=1 -e RUN_LOCALSTACK_TESTS=1 -e RUN_KEYCLOAK_TESTS=0 -e RUN_LOCAL_SLICE_TESTS=0 -v "$PWD:/workspace:ro" -w /workspace --entrypoint python api -B -m unittest discover -s tests -t . -p 'test_*.py' -v
+docker compose build zap-worker
+```
+
+Eight new unit tests cover classification, transient success, exact retry
+exhaustion, original-exception preservation, permanent-error handling, safe logs,
+shutdown, delay cap, single-attempt behavior, settings and consumer exhaustion.
+Three new real PostgreSQL/LocalStack checks inject transient failures at the
+production delete/confirmation boundaries and verify permanent scanner errors
+are safely persisted once. The existing acknowledgment-exhaustion test now
+asserts the configured call count and still verifies terminal replay without a
+second scan. Faults and scanner adapters are injected; no network outage or real
+scanner is exercised by those checks. Mocked retry waits avoid test delays.
+
+The default is three total attempts and two/four-second retry waits. Expired or
+uncertain claims still follow conservative recovery. Supervisor restart and
+later operations get new retry budgets; this is not a durable lifetime retry
+counter. US-015.2/US-015.3 retain full dead-letter/reconciliation acceptance.
+No migration, dependency or public contract change is introduced.
+
+On 2026-11-13, all 52 focused checks passed. The worker image built successfully
+and imported/executed the new retry helper without a source mount or network,
+under its existing nonroot user. The narrowed image inventory remained intact.
+Real-ZAP checks were not rerun because scanner/cleanup code was unchanged; the
+existing separately verified cleanup behavior is preserved. No application
+container was rebuilt in place or activated on application deliveries, and the
+private `.env` remained unchanged. The user accepted this result on 2026-11-13 and authorized session recording
+and marking US-015.1 Done. Commit approval remains separate.
+
+Regression discovery passed on 2026-11-13: 213 discovered, 198 passed and 15
+explicitly skipped (four live Keycloak, six local-slice, three real-ZAP and two
+actual-scanner-result persistence/HTTP checks). Those opt-in suites were not
+rerun: this change affects worker retry boundaries, not authentication or scanner
+execution. Six Python syntax checks, six Markdown fence checks, 68 local link
+targets and Git whitespace checks passed. Cleanup verified no delivery/execution
+schemas or delivery queues/topics remained; all six existing service container
+IDs were unchanged. No failed checks or material deviations from the approved
+preview remained. The accepted session entry and backlog status were updated outside this
+repository after user acceptance. No commit has been created for this story.

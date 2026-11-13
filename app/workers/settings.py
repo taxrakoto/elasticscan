@@ -10,8 +10,20 @@ class WorkerSettings:
     visibility_seconds: int = 90
     recovery_interval_seconds: int = 5
     recovery_batch_size: int = 10
+    retry_max_attempts: int = 3
+    retry_base_delay_seconds: int = 2
 
     def __post_init__(self):
+        if (
+            type(self.retry_max_attempts) is not int
+            or not 1 <= self.retry_max_attempts <= 10
+        ):
+            raise ValueError('Retry attempts must be between 1 and 10')
+        if (
+            type(self.retry_base_delay_seconds) is not int
+            or not 1 <= self.retry_base_delay_seconds <= 30
+        ):
+            raise ValueError('Retry base delay must be between 1 and 30 seconds')
         if (
             type(self.recovery_interval_seconds) is not int
             or not 1 <= self.recovery_interval_seconds <= 300
@@ -57,5 +69,11 @@ class WorkerSettings:
             )),
             recovery_batch_size=int(os.environ.get(
                 'WORKER_RECOVERY_BATCH_SIZE', '10'
+            )),
+            retry_max_attempts=int(os.environ.get(
+                'WORKER_RETRY_MAX_ATTEMPTS', '3'
+            )),
+            retry_base_delay_seconds=int(os.environ.get(
+                'WORKER_RETRY_BASE_DELAY_SECONDS', '2'
             )),
         )

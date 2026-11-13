@@ -15,6 +15,7 @@ COPY --chown=zap:zap \
     app/workers/__init__.py app/workers/zap.py \
     app/workers/settings.py app/workers/consumer.py app/workers/main.py \
     app/workers/recovery.py \
+    app/workers/retry.py \
     app/workers/
 COPY --chown=zap:zap \
     app/scanners/__init__.py app/scanners/base.py \

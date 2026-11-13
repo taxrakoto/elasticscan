@@ -185,3 +185,27 @@ checks are simulated. Real ZAP cleanup is verified separately under provisional
 resource limits. Full cancellation/deletion APIs and API load benchmarking remain
 other stories. See [execution budgets](../execution-budgets.md),
 [worker delivery](../worker-delivery.md) and the [test guide](../../tests/README.md).
+
+
+## Repeatable infrastructure boundaries (US-015.1)
+
+`app/workers/retry.py` supplies a bounded operation helper. The queue loop uses it
+for receive; `consume_one` uses it for fresh terminal reads and acknowledgment.
+The helper never wraps scanner execution, claim/outcome commits or renewal.
+`terminal_matches` creates a new session per call and validates message identity
+and durable terminal state before delete. Database claim caps and terminal guards
+therefore preserve the Idempotent Consumer behavior across these retries.
+
+This is an extension of the existing pattern, not a new pattern named Retry.
+Exponential delays and classification are resilience techniques. Additional calls
+and waits can prolong failure reporting; deterministic delays may align across
+workers. Limits are per operation invocation and reset across restart/redelivery;
+they do not establish a durable delivery count. Compose can restart an exhausted
+consumer. Uncertain transactions still use recovery instead of scanner retries.
+
+Unit tests assert exact limits, classification, shutdown and safe diagnostics.
+Integration checks join real PostgreSQL/LocalStack with injected service faults,
+verify delete/read retry and canonical permanent scanner failure, and confirm
+terminal replay never invokes a scanner. See [worker retries](../worker-retries.md)
+and the [test guide](../../tests/README.md). Dead-letter diagnostics and controlled
+reconciliation remain US-015.2/US-015.3; physical exactly-once is not promised.

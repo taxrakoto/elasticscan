@@ -70,3 +70,12 @@ exposes provisional Compose concurrency/CPU/memory budgets; runtime timeout and
 cleanup reuse the existing adapter. See [execution budgets](../execution-budgets.md).
 Full cancellation/deletion APIs, tombstones and US-017.3 load acceptance remain
 separate; present recovery preserves cancellation metadata and absent records.
+
+
+## Worker failure classification and bounded retries
+
+US-015.1 extends [Idempotent Consumer](idempotent-consumer.md) with bounded retries
+at receive, fresh terminal-read and acknowledgment boundaries. Retry/backoff are
+resilience techniques; scanner invocation and uncertain transaction commits are
+not repeated. See [worker retries](../worker-retries.md) for classification,
+configuration, supervision limits, diagnostics and verification.

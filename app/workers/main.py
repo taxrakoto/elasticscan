@@ -19,6 +19,7 @@ from app.db.session import database_url, make_session_factory
 from app.scanners.baseline import ZapBaselineAdapter
 from app.workers.consumer import consume_one
 from app.workers.recovery import recovery_loop
+from app.workers.retry import RetryStopped, retry_operation
 from app.workers.settings import WorkerSettings
 
 
@@ -32,16 +33,18 @@ def consume_loop(
 ):
     while not stopped.is_set():
         try:
-            if stopped.is_set():
-                break
-            deliveries = sqs.receive_message(
-                QueueUrl=queue_url,
-                MaxNumberOfMessages=1,
-                WaitTimeSeconds=10,
-                VisibilityTimeout=settings.visibility_seconds,
-            ).get('Messages', [])
-
-            for delivery in deliveries:
+            response = retry_operation(
+                lambda: sqs.receive_message(
+                    QueueUrl=queue_url,
+                    MaxNumberOfMessages=1,
+                    WaitTimeSeconds=10,
+                    VisibilityTimeout=settings.visibility_seconds,
+                ),
+                name='receive_message',
+                settings=settings,
+                stopped=stopped,
+            )
+            for delivery in response.get('Messages', []):
                 if stopped.is_set():
                     break
                 decision = consume_one(
@@ -56,11 +59,13 @@ def consume_loop(
                     policy=policy,
                 )
                 logger.info('worker_delivery outcome=%s', decision)
+        except RetryStopped:
+            return
         except (
             SQLAlchemyError, BotoCoreError, ClientError, ValidationError,
         ):
             logger.error('worker_dependency_or_storage_unavailable')
-            stopped.wait(2)
+            return
 
 
 def run(

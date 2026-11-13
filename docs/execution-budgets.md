@@ -25,8 +25,8 @@ can override the configured replica count. Independent deployments or manually
 started containers are outside this local concurrency limit.
 
 The current policy permits **one automatic scanner attempt per job**. This is a
-fixed conservative cap, not a configurable scanner retry count. Configurable
-transient infrastructure retries remain US-015.1. Recovery never returns a job to
+fixed conservative cap, not a configurable scanner retry count. US-015.1 adds
+bounded retries for selected repeatable infrastructure operations; see [worker retries](worker-retries.md). Recovery never returns a job to
 pending and never invokes a scanner.
 
 ## Timeout and termination
@@ -104,3 +104,13 @@ interruption cleanup. Default/environment checks verify the 900-second setting;
 a shortened real run is not a literal fifteen-minute execution. No external scan,
 production deployment, full deletion/cancellation lifecycle or API benchmark is
 claimed by these checks.
+
+
+## Infrastructure-operation budget
+
+US-015.1 adds `WORKER_RETRY_MAX_ATTEMPTS=3` and
+`WORKER_RETRY_BASE_DELAY_SECONDS=2`. Defaults permit two retry waits (two/four
+seconds), independently of the one-scanner-attempt policy. A restart resets this
+operation-local budget. Claims, scanner execution, terminal writes and authority
+renewal are not wrapped. See [worker retries](worker-retries.md) for classification,
+shutdown, safe diagnostics and the existing supervisor's restart behavior.

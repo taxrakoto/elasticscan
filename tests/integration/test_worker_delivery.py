@@ -537,8 +537,12 @@ class WorkerDeliveryTests(unittest.TestCase):
         )
         adapter = Mock()
         adapter.run.return_value = self.output()
-        with self.assertRaises(EndpointConnectionError):
-            self.consume(delivery, lambda _: adapter, sqs=tracked)
+        with patch.object(self.stopped, 'wait', return_value=False):
+            with self.assertRaises(EndpointConnectionError):
+                self.consume(delivery, lambda _: adapter, sqs=tracked)
+        self.assertEqual(
+            tracked.delete_message.call_count, self.settings.retry_max_attempts,
+        )
         with self.sessions() as session:
             job = session.get(Job, job_id)
             self.assertEqual(job.status, 'completed')
@@ -777,3 +781,87 @@ class WorkerDeliveryTests(unittest.TestCase):
         self.assertEqual(
             recover_once(self.sessions, settings=self.settings), [job_id],
         )
+
+    def test_transient_delete_failure_retries_without_scanner_reexecution(self):
+        job_id, body = self.create()
+        delivery = self.publish(body)
+        adapter = Mock()
+        adapter.run.return_value = self.output()
+        tracked = Mock(wraps=self.sqs)
+        original_delete = self.sqs.delete_message
+        calls = 0
+
+        def delete(**values):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                raise EndpointConnectionError(
+                    endpoint_url='http://localstack:4566',
+                )
+            return original_delete(**values)
+
+        tracked.delete_message.side_effect = delete
+        with patch.object(self.stopped, 'wait', return_value=False):
+            self.assertEqual(
+                self.consume(delivery, lambda _: adapter, sqs=tracked),
+                'processed',
+            )
+        self.assertEqual(tracked.delete_message.call_count, 2)
+        adapter.run.assert_called_once()
+        with self.sessions() as session:
+            job = session.get(Job, job_id)
+            self.assertEqual(job.status, 'completed')
+            self.assertEqual(job.attempt_count, 1)
+
+    def test_terminal_confirmation_retries_fresh_read_without_scanning(self):
+        job_id, body = self.create()
+        adapter = Mock()
+        adapter.run.return_value = self.output()
+        self.consume(self.publish(body), lambda _: adapter)
+        delivery = self.publish(body)
+        factory = Mock()
+        from app.workers.consumer import terminal_matches
+        calls = 0
+
+        def confirm(sessions, message):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                original = Exception('private detail')
+                original.sqlstate = '08006'
+                raise OperationalError('private SQL', {}, original)
+            return terminal_matches(sessions, message)
+
+        with patch(
+            'app.workers.consumer.terminal_matches', side_effect=confirm,
+        ), patch.object(self.stopped, 'wait', return_value=False):
+            self.assertEqual(
+                self.consume(delivery, factory), 'terminal_confirmed',
+            )
+        self.assertEqual(calls, 2)
+        factory.assert_not_called()
+        with self.sessions() as session:
+            self.assertEqual(session.get(Job, job_id).attempt_count, 1)
+
+    def test_permanent_scanner_failure_is_stored_once_without_retry(self):
+        job_id, body = self.create()
+        delivery = self.publish(body)
+        adapter = Mock()
+        adapter.run.side_effect = OSError('secret scanner detail')
+        self.assertEqual(
+            self.consume(delivery, lambda _: adapter), 'processed',
+        )
+        adapter.run.assert_called_once()
+        with self.sessions() as session:
+            job = session.get(Job, job_id)
+            self.assertEqual(job.status, 'failed')
+            self.assertEqual(job.attempt_count, 1)
+            self.assertEqual(job.error['code'], 'scanner_execution_failed')
+            self.assertNotIn('secret', json.dumps(job.error))
+            self.assertIsNone(job.result)
+            self.assertIsNotNone(job.finished_at)
+        factory = Mock()
+        self.assertEqual(
+            self.consume(self.publish(body), factory), 'terminal_confirmed',
+        )
+        factory.assert_not_called()

@@ -11,6 +11,7 @@ from app.repositories.lifecycle import complete_job, fail_job, renew_job
 from app.scanners.base import ScanInterrupted
 from app.scanners.zap_outcomes import execute_zap_scan
 from app.schemas.retrieval import JobStatusResponse
+from app.workers.retry import retry_operation
 from app.workers.zap import handle_message, parse_message
 
 
@@ -140,13 +141,28 @@ def consume_one(
     if message is None:
         return 'invalid_message'
 
-    def acknowledge():
-        sqs.delete_message(
-            QueueUrl=queue_url,
-            ReceiptHandle=delivery['ReceiptHandle'],
+    def confirm_terminal():
+        return retry_operation(
+            lambda: terminal_matches(sessions, message),
+            name='confirm_terminal',
+            settings=settings,
+            stopped=stopped,
+            job_id=message.job_id,
         )
 
-    if terminal_matches(sessions, message):
+    def acknowledge():
+        return retry_operation(
+            lambda: sqs.delete_message(
+                QueueUrl=queue_url,
+                ReceiptHandle=delivery['ReceiptHandle'],
+            ),
+            name='delete_message',
+            settings=settings,
+            stopped=stopped,
+            job_id=message.job_id,
+        )
+
+    if confirm_terminal():
         acknowledge()
         return 'terminal_confirmed'
 
@@ -173,7 +189,7 @@ def consume_one(
     except ScanInterrupted:
         return 'interrupted'
 
-    if terminal_matches(sessions, message):
+    if confirm_terminal():
         acknowledge()
         return 'processed'
     return decision
